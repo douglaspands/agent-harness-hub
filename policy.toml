@@ -1,0 +1,126 @@
+# Fonte única declarativa de governança, toolchains e guardrails multi-harness
+# Sincroniza automaticamente Antigravity (.agents/hooks.json, GEMINI.md) e Claude Code (.claude/settings.json, CLAUDE.md)
+
+[project]
+name = "agent-harness-hub"
+version = "0.1.0"
+
+[commands]
+# Comandos aprovados automaticamente para autonomia ágil dentro do repositório
+allow = [
+    "git status",
+    "git diff",
+    "git log",
+    "git branch",
+    "git show",
+    "uv run",
+    "python3 -m unittest",
+    "python3 -m ctx",
+    "ctx",
+    "./bin/ctx",
+    "pytest",
+    "rg",
+    "fd",
+    "ls",
+    "cat",
+    "head",
+    "tail",
+    "wc",
+    "pwd",
+    "which",
+]
+
+# Comandos que exigem confirmação explícita do usuário
+ask = [
+    "git push",
+    "git commit",
+    "git checkout",
+    "git reset",
+    "rm",
+    "dnf install",
+    "apt install",
+    "pip install",
+]
+
+# Comandos proibidos e bloqueados imediatamente
+deny = [
+    "rm -rf /",
+    "mkfs",
+    ":(){ :|:& };:",
+    "curl | bash",
+    "wget | bash",
+    "curl | sh",
+    "wget | sh",
+]
+
+# Filtros seguros aprovados automaticamente em pipes simples (ex: cmd | rg termo)
+safe_pipe_filters = [
+    "head",
+    "tail",
+    "rg",
+    "grep",
+    "wc",
+    "sort",
+    "uniq",
+    "jq",
+    "cut",
+    "tr",
+]
+
+[paths]
+# Arquivos que o agente nunca pode ler ou expor
+deny = [
+    "~/.ssh",
+    "~/.aws",
+    ".env",
+    "/etc/shadow",
+]
+
+# Arquivos críticos do repositório que exigem aprovação para alteração
+protected = [
+    "policy.toml",
+    "scripts/guardrail.py",
+]
+
+# Caminhos do sistema permitidos para leitura segura
+readonly_system = [
+    "/etc/os-release",
+    "/proc/cpuinfo",
+    "/proc/meminfo",
+]
+
+[toolchains.python]
+canonical_runner = "uv run"
+manager = "uv"
+venv_path = ".venv"
+forbidden_direct = [
+    "python",
+    "python3",
+    "/usr/bin/python",
+    "/usr/bin/python3",
+    ".venv/bin/python",
+    ".venv/bin/python3",
+]
+reason = "Python deve ser executado exclusivamente via 'uv run' (ou 'ctx') usando o .venv local."
+
+[toolchains.nodejs]
+canonical_runner = "asdf exec"
+manager = "asdf"
+shims_dir = "~/.asdf/shims"
+forbidden_direct = [
+    "/usr/bin/node",
+    "/usr/bin/npm",
+    "/usr/bin/npx",
+    "/usr/local/bin/node",
+]
+reason = "Node.js/npm/npx devem usar a versão gerenciada pelo asdf (~/.asdf/shims ou 'asdf exec')."
+
+[containers]
+prefer = "podman"
+fallback = "docker"
+policy = "container_first"
+
+[storage.btrfs_nocow]
+path = "~/data"
+action = "ask"
+reason = "Volumes pesados e bancos de dados devem consultar o usuário para uso de ~/data (No-COW)."

@@ -13,6 +13,26 @@ O repositório foi organizado de forma modular para permitir a adição contínu
 ```text
 agent-harness-hub/
 ├── README.md                                    # Índice mestre, objetivos e catálogo de recursos
+├── AGENTS.md / CLAUDE.md / GEMINI.md            # Instruções de contexto geradas pelo ctx (Turno 0)
+├── policy.toml                                  # Fonte única declarativa de governança multi-harness
+├── pyproject.toml                               # Configuração do projeto e entry point 'ctx'
+├── bin/
+│   └── ctx                                      # Wrapper executável portátil para a CLI ctx
+├── scripts/
+│   └── guardrail.py                             # Hook universal PreToolUse (< 5ms, stdlib pura)
+├── src/
+│   └── ctx/                                     # Motor de aceleração, RAG local e governança
+│       ├── __init__.py                          # Descoberta dinâmica da raiz do repositório
+│       ├── cli.py                               # CLI: index, search, map, bins, rule, doctor
+│       ├── rag.py                               # SQLite FTS5/BM25 + Chunker AST Python/Markdown
+│       └── policy.py                            # Sincronizador multi-harness + cache bins.json
+├── tests/                                       # Suíte de testes unitários (RAG, guardrail, policy)
+├── .agents/                                     # Configurações para Google Antigravity
+│   ├── hooks.json                               # Hook PreToolUse apontando para guardrail.py
+│   └── skills/workspace-ctx/SKILL.md            # Skill de aceleração para Antigravity
+├── .claude/                                     # Configurações para Claude Code
+│   ├── settings.json                            # Hook PreToolUse apontando para guardrail.py
+│   └── skills/workspace-ctx/SKILL.md            # Skill de aceleração para Claude Code
 ├── guides/                                      # Guias arquiteturais aprofundados e manuais de replicação
 │   └── guia-replicacao-rag-e-seguranca.md       # RAG local (ctx), Cache de Binários, Toolchains e Segurança
 ├── prompts/                                     # Snippets e instruções prontas para copiar e usar

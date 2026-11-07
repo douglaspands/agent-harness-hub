@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local RAG index & binary cache
+.ctx/
+
+# Local harness overrides
+.claude/settings.local.json
+

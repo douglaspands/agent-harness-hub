@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "command": "python3 scripts/guardrail.py"
+      }
+    ]
+  }
+}

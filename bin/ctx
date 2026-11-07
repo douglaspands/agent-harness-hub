@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Wrapper executável portátil para invocar ctx sem depender de instalação global
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="${DIR}/src:${PYTHONPATH:-}"
+exec /usr/bin/python3 -m ctx.cli "$@"
