@@ -46,7 +46,13 @@ class TestCatalog(unittest.TestCase):
             "Seções geradas do README desatualizadas: rode `ctx prompt catalog`",
         )
         for entry in build_catalog(REPO)["prompts"]:
-            self.assertIn(f"`{entry['id']}`", readme)
+            if entry["covered_by_kit"]:
+                # Parte do pacote: listado na seção do pacote, não oferecido como bloco avulso
+                self.assertIn(f"**{entry['title']}**", readme)
+                self.assertNotIn(f"`{entry['id']}`", readme)
+            else:
+                self.assertIn(f"`{entry['id']}`", readme)
+        self.assertIn("pacotes/autonomia-e-seguranca/INSTALL.md", readme)
 
     def test_update_readme_requires_markers(self) -> None:
         with self.assertRaises(ValueError):
@@ -54,7 +60,8 @@ class TestCatalog(unittest.TestCase):
 
     def test_docs_reference_current_version(self) -> None:
         expected = f"v{__version__}"
-        for rel in ("README.md", "BOOTSTRAP.md", "llms.txt", "prompts/INSTALL.md", "guides/guia-replicacao-rag-e-seguranca.md"):
+        docs = ("README.md", "llms.txt", "prompts/INSTALL.md", "pacotes/autonomia-e-seguranca/INSTALL.md", "pacotes/autonomia-e-seguranca/GUIA.md")
+        for rel in docs:
             text = (REPO / rel).read_text(encoding="utf-8")
             tags = set(re.findall(r"agent-harness-hub(?:/|@)(v\d+\.\d+\.\d+)", text))
             self.assertTrue(tags <= {expected}, f"{rel} cita {tags - {expected}}; esperado só {expected}")
@@ -131,7 +138,7 @@ class TestInstall(unittest.TestCase):
 
     def test_requires_kit(self) -> None:
         discovery = "discovery/descoberta-em-1-turno"
-        self.assertTrue(self.add(discovery)[0]["status"].startswith("pulado (requer o kit"))
+        self.assertTrue(self.add(discovery)[0]["status"].startswith("pulado (requer o pacote Autonomia e Segurança"))
         self.assertFalse((self.ws / "AGENTS.md").exists())
         self.assertEqual(self.add(discovery, force=True)[0]["status"], "adicionado")
 

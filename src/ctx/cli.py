@@ -154,7 +154,7 @@ def cmd_rule(args: argparse.Namespace) -> int:
 def cmd_init(args: argparse.Namespace) -> int:
     target = Path(args.target) if args.target else Path.cwd()
     res = init_project(target, runner=args.runner, force=args.force, sync=not args.no_sync)
-    print(f"📦 Kit agent-harness-hub v{res['version']} em {res['target']} (runner: {res['runner']})\n")
+    print(f"📦 Pacote Autonomia e Segurança (agent-harness-hub v{res['version']}) em {res['target']} (runner: {res['runner']})\n")
     print(format_table([[a["status"], a["path"]] for a in res["actions"]], ["Ação", "Arquivo"]))
     if "sync" in res:
         print(f"\n✓ Sincronizado: {', '.join(res['sync']['synced_targets'])}")
@@ -270,7 +270,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_rule.set_defaults(func=cmd_rule)
 
     # init
-    p_init = subparsers.add_parser("init", help="Instala/atualiza o kit (guardrail, policy, skills, hooks) no projeto atual")
+    p_init = subparsers.add_parser("init", help="Instala/atualiza o pacote Autonomia e Segurança (guardrail, policy, skills, hooks) no projeto atual")
     p_init.add_argument("--target", default=None, help="Diretório do projeto (padrão: diretório atual)")
     p_init.add_argument("--runner", default=None, help="Como os agentes invocam o ctx (padrão: .venv/bin/ctx se houver pyproject.toml, senão ctx)")
     p_init.add_argument("--force", action="store_true", help="Sobrescreve policy.toml e skills existentes")

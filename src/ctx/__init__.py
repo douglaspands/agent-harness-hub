@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 def find_workspace_root(start_path: Path | None = None) -> Path:

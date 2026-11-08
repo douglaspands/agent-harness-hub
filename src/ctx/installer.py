@@ -104,7 +104,7 @@ def next_steps(target: Path, runner: str, has_uv: bool | None = None) -> list[st
     steps: list[str] = []
     if runner == DEFAULT_RUNNER and not (target / ".venv" / "bin" / "ctx").exists():
         cmds = "  →  ".join(install_commands(target, has_uv))
-        steps.append(f"Instale o kit no .venv do projeto (cria .venv/bin/ctx): {cmds}")
+        steps.append(f"Instale o pacote Autonomia e Segurança no .venv do projeto (cria .venv/bin/ctx): {cmds}")
     elif runner == "ctx":
         steps.append(f"Se o comando ctx ainda não estiver no PATH: uv tool install {GIT_SPEC}")
     steps.append(

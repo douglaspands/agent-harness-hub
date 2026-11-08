@@ -143,8 +143,10 @@ def write_catalog(repo_root: Path) -> Path:
 # README (seções geradas a partir do catálogo)
 # --------------------------------------------------------------------------------------
 
-README_SECTIONS = ("APPLY", "CATALOG")
+README_SECTIONS = ("PACKAGE", "CATALOG")
 RAW_BASE = "https://raw.githubusercontent.com/douglaspands/agent-harness-hub"
+GIT_URL = "git+https://github.com/douglaspands/agent-harness-hub"
+PACKAGE_DIR = "pacotes/autonomia-e-seguranca"
 
 
 def _readme_markers(name: str) -> tuple[str, str]:
@@ -158,45 +160,70 @@ def _cell(text: str) -> str:
     return str(text).replace("|", "\\|").replace("\n", " ")
 
 
-def render_readme_apply(version: str) -> str:
-    tag = f"v{version}"
-    return f"""## 🚀 Como Aplicar um Prompt
+def render_readme_package(catalog: dict[str, Any]) -> str:
+    """Seção do pacote Autonomia e Segurança: instalação única + o que está incluído (do catálogo)."""
+    tag = f"v{catalog['version']}"
+    pkg = f'agent-harness-hub @ {GIT_URL}@{tag}'
+    included = [p for p in catalog["prompts"] if p["covered_by_kit"]]
+    included_lines = "\n".join(f"- **{_cell(p['title'])}** — {_cell(p['summary'])}" for p in sorted(included, key=lambda x: x["title"]))
+    return f"""## 🛡️ Autonomia e Segurança
 
-1. Escolha o **ID** de um ou mais prompts no [catálogo](#-catálogo-de-prompts).
-2. Na pasta do projeto de destino, peça ao seu agente (Claude Code, Antigravity, Codex, Cursor…):
+Pacote completo para dar **mais autonomia ao agente sem abrir mão da segurança**. Instala tudo de uma vez: guardrail que bloqueia de verdade o que é perigoso, regras de Turno 0 para o agente acertar na 1ª tentativa e o motor local `ctx`.
 
-   ```text
-   Instale o prompt <ID> do agent-harness-hub seguindo
-   {RAW_BASE}/{tag}/prompts/INSTALL.md
-   ```
+### Instalar (tudo de uma vez)
 
-   Para vários prompts, liste os IDs separados por espaço.
-3. Reinicie a sessão do agente para ele carregar as instruções novas.
+Na pasta do projeto de destino, peça ao seu agente (Claude Code, Codex, Cursor, Gemini CLI, Antigravity…):
 
-Pelo terminal, em projetos com o kit: `.venv/bin/ctx prompt add <ID> [<ID> ...]` (listar: `ctx prompt list`; remover: `ctx prompt remove <ID>`).
+```text
+Instale o pacote Autonomia e Segurança do agent-harness-hub seguindo
+{RAW_BASE}/{tag}/{PACKAGE_DIR}/INSTALL.md
+Respeite as regras de confirmação do documento e me pergunte antes de alterar
+dependências ou qualquer coisa fora do projeto.
+```
 
-**O que acontece:** só o bloco de snippet do prompt é inserido em `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` (os que existirem; senão é criado o `AGENTS.md`, lido por Codex, Cursor, Copilot e outros), entre marcadores `<!-- agent-harness-hub:prompt <ID> ... -->`. Reinstalar atualiza o bloco; nada fora dele é alterado.
+Ou pelo terminal:
+
+```bash
+uv add --dev "{pkg}"
+.venv/bin/ctx init
+```
+
+Sem `uv`: `python3 -m venv .venv`, depois `.venv/bin/python -m pip install "{pkg}"` e `.venv/bin/ctx init`. O Python da máquina serve só para criar o venv.
+
+Depois: ajuste `policy.toml` (harnesses do time e comandos de build/teste), rode `.venv/bin/ctx rule sync` e reinicie o agente. No Codex, confie no hook em `/hooks`.
+
+### O que está incluído
+
+- **Guardrail de pré-execução** com bloqueio real no Claude Code, Codex, Cursor e Gemini CLI (e Antigravity): segredos, comandos destrutivos, encadeamento shell, `sudo`, instalação no host, escrita fora do projeto e arquivos de governança.
+- **Menos prompts de permissão**: comandos de baixo risco seguem o modo de permissão do próprio harness (`defer`); só o que é sensível pede confirmação.
+{included_lines}
+- **Motor `ctx`**: `status`, `map`, `search` multi-query, `doctor` e `metrics`.
 
 **Por que a URL tem tag (`{tag}`) e não `main`:** o conteúdo fica imutável e auditável; um commit futuro na `main` não muda o que o seu agente obedece.
 
-### Kit completo (bloqueio real, não só instruções)
-
-Além dos prompts, o hub tem um kit com guardrail de pré-execução (bloqueio real no Claude Code, Codex, Cursor e Gemini CLI), `policy.toml`, motor de busca local `ctx` e skills. Ele já inclui os prompts marcados com ✅ na coluna **Kit**, e é pré-requisito dos prompts com `kit` na coluna **Requer**:
-
-```text
-Leia {RAW_BASE}/{tag}/BOOTSTRAP.md e siga as instruções
-para instalar o kit agent-harness-hub neste projeto. Respeite as regras de confirmação do documento e
-me pergunte antes de alterar dependências ou qualquer coisa fora do projeto.
-```"""
+Detalhes, arquitetura e matriz por harness: [`{PACKAGE_DIR}/GUIA.md`]({PACKAGE_DIR}/GUIA.md)."""
 
 
 def render_readme_catalog(catalog: dict[str, Any]) -> str:
-    prompts = catalog["prompts"]
+    """Catálogo de prompts avulsos (os que não fazem parte de um pacote)."""
+    tag = f"v{catalog['version']}"
+    prompts = [p for p in catalog["prompts"] if not p["covered_by_kit"]]
     lines = [
-        "## 📚 Catálogo de Prompts",
+        "## 📚 Prompts Avulsos",
         "",
-        f"**{len(prompts)} prompts** · versão `v{catalog['version']}` · catálogo em JSON: [`prompts/catalog.json`](prompts/catalog.json)",
+        "Prompts independentes, fora do pacote, aplicados um a um. Na pasta do projeto, peça ao seu agente:",
+        "",
+        "```text",
+        "Instale o prompt <ID> do agent-harness-hub seguindo",
+        f"{RAW_BASE}/{tag}/prompts/INSTALL.md",
+        "```",
+        "",
+        "O bloco do prompt é inserido em `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` entre marcadores; reinstalar atualiza só esse bloco.",
+        "Com o pacote instalado, também dá para usar `.venv/bin/ctx prompt add <ID>`.",
     ]
+    if not prompts:
+        lines += ["", "_Nenhum prompt avulso ainda._"]
+        return "\n".join(lines)
     by_category: dict[str, list[dict[str, Any]]] = {}
     for p in prompts:
         by_category.setdefault(p["category"], []).append(p)
@@ -205,22 +232,21 @@ def render_readme_catalog(catalog: dict[str, Any]) -> str:
             "",
             f"### `{category}`",
             "",
-            "| Prompt | ID para aplicar | O que faz | Harnesses | Requer | Kit |",
-            "| :--- | :--- | :--- | :--- | :---: | :---: |",
+            "| Prompt | ID para aplicar | O que faz | Harnesses | Requer |",
+            "| :--- | :--- | :--- | :--- | :---: |",
         ]
         for p in sorted(by_category[category], key=lambda x: x["id"]):
             harnesses = ", ".join(p.get("harnesses") or []) or "Todos"
-            requires = ", ".join(p.get("requires") or []) or "—"
-            kit = "✅" if p["covered_by_kit"] else "—"
+            requires = ", ".join("pacote Autonomia e Segurança" if r == "kit" else r for r in (p.get("requires") or [])) or "—"
             lines.append(
-                f"| [**{_cell(p['title'])}**]({p['path']}) | `{p['id']}` | {_cell(p['summary'])} | {_cell(harnesses)} | {requires} | {kit} |"
+                f"| [**{_cell(p['title'])}**]({p['path']}) | `{p['id']}` | {_cell(p['summary'])} | {_cell(harnesses)} | {requires} |"
             )
     return "\n".join(lines)
 
 
 def update_readme(text: str, catalog: dict[str, Any]) -> str:
-    """Substitui o conteúdo entre os marcadores APPLY e CATALOG do README."""
-    rendered = {"APPLY": render_readme_apply(catalog["version"]), "CATALOG": render_readme_catalog(catalog)}
+    """Substitui o conteúdo entre os marcadores PACKAGE e CATALOG do README."""
+    rendered = {"PACKAGE": render_readme_package(catalog), "CATALOG": render_readme_catalog(catalog)}
     for name in README_SECTIONS:
         start, end = _readme_markers(name)
         pattern = re.compile(re.escape(start) + r".*?" + re.escape(end), re.DOTALL)
@@ -310,10 +336,10 @@ def add_prompts(
             text = path.read_text(encoding="utf-8") if path.exists() else ""
             has_kit = KIT_MARKER in text
             if prompt["covered_by_kit"] and has_kit and not force:
-                report.append({"id": prompt_id, "file": rel, "status": "pulado (já coberto pelo kit; --force instala mesmo assim)"})
+                report.append({"id": prompt_id, "file": rel, "status": "pulado (já faz parte do pacote Autonomia e Segurança instalado; --force instala mesmo assim)"})
                 continue
             if "kit" in prompt["requires"] and not has_kit and not force:
-                report.append({"id": prompt_id, "file": rel, "status": "pulado (requer o kit: instale pelo BOOTSTRAP.md; --force instala mesmo assim)"})
+                report.append({"id": prompt_id, "file": rel, "status": "pulado (requer o pacote Autonomia e Segurança: instale por pacotes/autonomia-e-seguranca/INSTALL.md; --force instala mesmo assim)"})
                 continue
             new_text, status = upsert_block(text, prompt_id, block)
             if new_text != text:

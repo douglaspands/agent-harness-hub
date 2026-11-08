@@ -1,6 +1,8 @@
-# Guia de Replicação: RAG Local One-Shot (`ctx`), Cache de Binários/Receitas, Toolchains Sandbox-Safe e Motor Universal de Autonomia com Segurança
+# Pacote Autonomia e Segurança — Guia de Arquitetura
 
-> **Agente de IA instalando o kit em um projeto?** Este guia é a referência conceitual. Para instalar, siga o [`BOOTSTRAP.md`](../BOOTSTRAP.md) (curto, imperativo, com regras de confirmação) — URL fixada: `https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.2.0/BOOTSTRAP.md`. O código vem do pacote versionado via `ctx init`; não reescreva arquivos a partir deste texto.
+Descoberta One-Shot com RAG local (`ctx`), cache de binários e receitas, toolchains Sandbox-Safe e guardrail multi-harness.
+
+> **Agente de IA instalando o pacote em um projeto?** Este guia é a referência conceitual. Para instalar, siga o [`INSTALL.md`](INSTALL.md) deste pacote (curto, imperativo, com regras de confirmação) — URL fixada: `https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.3.0/pacotes/autonomia-e-seguranca/INSTALL.md`. O código vem do pacote versionado via `ctx init`; não reescreva arquivos a partir deste texto.
 
 Este guia é **100% agnóstico de repositório** e documenta a arquitetura completa, o racional técnico de cada ferramenta escolhida, os diagramas de fluxo (incluindo **Execução One-Shot / Zero-Retry**, **Coaching de Eficiência** e **bloqueio de encadeamento no shell**) e o passo a passo para replicar o motor **`ctx`** em **qualquer outro repositório ou projeto** em menos de 2 minutos.
 
@@ -197,7 +199,7 @@ meu-repositorio/
 │       ├── __init__.py                          # Descoberta da raiz do workspace a partir do diretório atual
 │       ├── __main__.py                          # Permite `python -m ctx` (via .venv/bin/python ou uv run)
 │       ├── cli.py                               # Entry point da CLI ctx (init, status, index, search, map, bins, rule, doctor)
-│       ├── installer.py                         # `ctx init`: instala/atualiza o kit em qualquer projeto
+│       ├── installer.py                         # `ctx init`: instala/atualiza o pacote em qualquer projeto
 │       ├── kit/                                 # Fonte dos arquivos instalados (guardrail, venv-python, policy, skill)
 │       ├── rag.py                               # Motor SQLite FTS5/BM25 multi-query + mapa estrutural sem archive/ + status One-Shot
 │       └── policy.py                            # Sincronizador multi-harness + cache .ctx/bins.json + doctor
@@ -221,23 +223,23 @@ Os arquivos `.agents/hooks.json`, `.claude/settings.json`, `AGENTS.md`, `CLAUDE.
 
 ### Passo 1: Instalar o motor `ctx` no `.venv` do projeto (fixado por tag)
 
-O kit é um pacote Python versionado. Instale-o **no `.venv` do projeto** — nunca no Python global — usando um tag (`v0.2.0`), não `main`:
+O motor do pacote é distribuído como pacote Python versionado. Instale-o **no `.venv` do projeto** — nunca no Python global — usando um tag (`v0.3.0`), não `main`:
 
 | Situação | Comandos (um por chamada) |
 | :--- | :--- |
-| `uv` + `pyproject.toml` | `uv add --dev "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@v0.2.0"` |
-| `uv`, sem `pyproject.toml` (Node, Go, Rust…) | `uv venv .venv` → `uv pip install --python .venv/bin/python "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@v0.2.0"` |
-| **sem `uv`** | `python3 -m venv .venv` → `.venv/bin/python -m pip install "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@v0.2.0"` |
+| `uv` + `pyproject.toml` | `uv add --dev "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@v0.3.0"` |
+| `uv`, sem `pyproject.toml` (Node, Go, Rust…) | `uv venv .venv` → `uv pip install --python .venv/bin/python "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@v0.3.0"` |
+| **sem `uv`** | `python3 -m venv .venv` → `.venv/bin/python -m pip install "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@v0.3.0"` |
 
 > **Regra do Python**: sem `uv`, o Python da máquina é usado **apenas** para criar o venv (`python3 -m venv .venv`, liberado em `[toolchains.python].bootstrap_allowed`). Todo o resto roda com `.venv/bin/python`; o guardrail nega qualquer outro uso de `python`/`python3` globais.
 
-### Passo 2: Instalar o kit com `ctx init`
+### Passo 2: Instalar o pacote com `ctx init`
 
 ```bash
 .venv/bin/ctx init
 ```
 
-O comando é idempotente e copia do pacote (não de texto de chat) os arquivos do kit:
+O comando é idempotente e copia do pacote (não de texto de chat) os arquivos do pacote:
 
 | Arquivo | Comportamento em reinstalações |
 | :--- | :--- |
@@ -275,7 +277,7 @@ build-backend = "uv_build"
 > module-name = ["<outro_pacote>", "ctx"]
 > ```
 
-Depois rode `.venv/bin/ctx init` normalmente (o kit é lido de `src/ctx/kit/`).
+Depois rode `.venv/bin/ctx init` normalmente (os arquivos do pacote são lidos de `src/ctx/kit/`).
 
 ### Passo 3: (Opcional, em máquinas Linux com Btrfs) Preparar a pasta `~/data` com `chattr +C`
 
