@@ -285,7 +285,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # prompt
     p_prompt = subparsers.add_parser("prompt", help="Lista, instala e remove prompts individuais do hub")
     prompt_sub = p_prompt.add_subparsers(dest="prompt_cmd", required=True)
-    source_help = f"URL https com tag ou diretório local do hub (padrão: {DEFAULT_SOURCE})"
+    source_help = f"URL https do hub ou diretório local (padrão: branch main, {DEFAULT_SOURCE})"
     pl = prompt_sub.add_parser("list", help="Lista os prompts do catálogo")
     pl.add_argument("--source", default=DEFAULT_SOURCE, help=source_help)
     pa = prompt_sub.add_parser("add", help="Instala prompts em AGENTS.md/CLAUDE.md/GEMINI.md (idempotente)")

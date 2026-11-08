@@ -1,20 +1,20 @@
 # agent-harness-hub
 
-> Hub de pacotes e prompts para agent harnesses (Claude Code, Codex, Cursor, Gemini CLI, Antigravity e qualquer agente que leia AGENTS.md). Pacote principal: **Autonomia e Segurança** — guardrail de pré-execução no protocolo de cada harness (allow/ask/deny/defer), política declarativa (policy.toml), Python sempre do .venv, descoberta One-Shot com o motor local `ctx`, toolchains Sandbox-Safe, comandos atômicos, ferramentas nativas de arquivo e Container-First. Versão estável: v0.3.0. Use sempre URLs com tag, nunca `main`.
+> Hub de pacotes e prompts para agent harnesses (Claude Code, Codex, Cursor, Gemini CLI, Antigravity e qualquer agente que leia AGENTS.md). Pacote principal: **Autonomia e Segurança** — guardrail de pré-execução no protocolo de cada harness (allow/ask/deny/defer), política declarativa (policy.toml), Python sempre do .venv, descoberta One-Shot com o motor local `ctx`, toolchains Sandbox-Safe, comandos atômicos, ferramentas nativas de arquivo e Container-First. A branch `main` é a fonte da verdade: todos os links abaixo apontam para ela.
 
-Para instalar o pacote em um projeto, leia e siga apenas o INSTALL do pacote: ele instala tudo de uma vez a partir do pacote versionado (`ctx init`); nada é copiado destes textos.
+Para instalar o pacote em um projeto, leia e siga apenas o INSTALL do pacote: ele instala tudo de uma vez (`ctx init`); nada é copiado destes textos.
 
 ## Pacote Autonomia e Segurança
 
-- [INSTALL v0.3.0](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.3.0/pacotes/autonomia-e-seguranca/INSTALL.md): instalação completa para agentes, com regras de confirmação, variantes com e sem uv, validação e matriz de harnesses.
-- [GUIA v0.3.0](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.3.0/pacotes/autonomia-e-seguranca/GUIA.md): arquitetura, racional de cada ferramenta, fluxo decisório do guardrail, suporte multi-harness e diagramas.
-- [Template de policy.toml v0.3.0](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.3.0/templates/policy.toml.example): todas as chaves da política com comentários.
+- [INSTALL](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/main/pacotes/autonomia-e-seguranca/INSTALL.md): instalação completa para agentes, com regras de confirmação, variantes com e sem uv, validação e matriz de harnesses.
+- [GUIA](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/main/pacotes/autonomia-e-seguranca/GUIA.md): arquitetura, racional de cada ferramenta, fluxo decisório do guardrail, suporte multi-harness e diagramas.
+- [Template de policy.toml](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/main/templates/policy.toml.example): todas as chaves da política com comentários.
 
 ## Prompts independentes
 
-- [INSTALL de prompts v0.3.0](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.3.0/prompts/INSTALL.md): instala prompts avulsos do catálogo em AGENTS.md/CLAUDE.md/GEMINI.md.
-- [Catálogo v0.3.0](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.3.0/prompts/catalog.json): IDs, resumos e caminhos (JSON); entradas com `covered_by_kit: true` já fazem parte do pacote Autonomia e Segurança.
+- [INSTALL de prompts](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/main/prompts/INSTALL.md): instala prompts avulsos do catálogo em AGENTS.md/CLAUDE.md/GEMINI.md.
+- [Catálogo](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/main/prompts/catalog.json): pacotes e prompts (JSON); prompts com `covered_by_kit: true` já fazem parte do pacote Autonomia e Segurança.
 
 ## Optional
 
-- [Prompt: Graph Engineering](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.3.0/prompts/graph-engineering/dag-fanout-fanin.md)
+- [Prompt: Graph Engineering](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/main/prompts/graph-engineering/dag-fanout-fanin.md)

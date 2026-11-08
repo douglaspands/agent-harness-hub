@@ -1,7 +1,7 @@
 """Instalador idempotente do kit (`ctx init`) em qualquer projeto.
 
-O código vem do pacote versionado (src/ctx/kit/), nunca de texto copiado de um chat ou de um guia,
-então todo projeto recebe exatamente o mesmo guardrail da versão fixada.
+O código vem do pacote instalado a partir da branch main (src/ctx/kit/), nunca de texto copiado de um
+chat ou de um guia, então todo projeto recebe exatamente o guardrail da main no momento da instalação.
 
 Política de escrita:
 - scripts/guardrail.py e scripts/venv-python: código do motor; sempre atualizados para a versão do kit.
@@ -22,12 +22,9 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from ctx import __version__
+from ctx import GIT_SPEC, __version__
 from ctx.policy import DEFAULT_RUNNER, doctor, sync_rules
 from ctx.rag import index_workspace
-
-REPO_URL = "https://github.com/douglaspands/agent-harness-hub"
-GIT_SPEC = f"git+{REPO_URL}@v{__version__}"
 GITIGNORE_LINES = [".venv/", ".ctx/", ".claude/settings.local.json"]
 SKILL_TARGETS = (".claude/skills/workspace-ctx/SKILL.md", ".agents/skills/workspace-ctx/SKILL.md")
 TEMPLATE_HEADER = "# Exemplo de policy.toml para governança de Agent Harnesses (copie para a raiz do repositório como policy.toml)"

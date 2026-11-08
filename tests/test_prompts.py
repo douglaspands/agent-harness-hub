@@ -7,10 +7,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ctx import __version__
+from ctx import GIT_SPEC
 from ctx.policy import sync_rules
 from ctx.prompts import (
     CATALOG_PATH,
+    DEFAULT_SOURCE,
     KIT_MARKER,
     add_prompts,
     build_catalog,
@@ -76,13 +77,19 @@ class TestCatalog(unittest.TestCase):
         with self.assertRaises(ValueError):
             update_readme("# README sem marcadores\n", build_catalog(REPO))
 
-    def test_docs_reference_current_version(self) -> None:
-        expected = f"v{__version__}"
+    def test_docs_point_to_main_without_tags(self) -> None:
+        """A main é a fonte da verdade: nenhum link ou instalação aponta para tag ou versão fixada."""
         docs = ("README.md", "llms.txt", "prompts/INSTALL.md", "pacotes/autonomia-e-seguranca/INSTALL.md", "pacotes/autonomia-e-seguranca/GUIA.md")
         for rel in docs:
             text = (REPO / rel).read_text(encoding="utf-8")
-            tags = set(re.findall(r"agent-harness-hub(?:/|@)(v\d+\.\d+\.\d+)", text))
-            self.assertTrue(tags <= {expected}, f"{rel} cita {tags - {expected}}; esperado só {expected}")
+            refs = set(re.findall(r"agent-harness-hub(?:/|@)([\w.\-]+)", text))
+            pinned = {r for r in refs if re.fullmatch(r"v?\d+\.\d+\.\d+", r) or r.startswith("refs")}
+            self.assertFalse(pinned, f"{rel} aponta para tag/versão fixada: {pinned}")
+        for rel in ("README.md", "llms.txt", "prompts/INSTALL.md", "pacotes/autonomia-e-seguranca/INSTALL.md"):
+            text = (REPO / rel).read_text(encoding="utf-8")
+            self.assertRegex(text, r"agent-harness-hub(/main/|@main)", f"{rel} deveria apontar para a main")
+        self.assertTrue(DEFAULT_SOURCE.endswith("/agent-harness-hub/main/"))
+        self.assertTrue(GIT_SPEC.endswith("agent-harness-hub@main"))
 
     def test_every_prompt_is_valid(self) -> None:
         catalog = build_catalog(REPO)

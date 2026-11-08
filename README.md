@@ -5,7 +5,7 @@ Pacotes e prompts prontos para aplicar em qualquer projeto que use agentes de IA
 <!-- CATALOG:START — gerado por `ctx prompt catalog`; não edite à mão -->
 ## 📚 Catálogo
 
-**1 pacote(s)** e **1 prompt(s) avulso(s)** · versão `v0.3.0` · catálogo em JSON: [`prompts/catalog.json`](prompts/catalog.json)
+**1 pacote(s)** e **1 prompt(s) avulso(s)** · fonte: branch `main` · catálogo em JSON: [`prompts/catalog.json`](prompts/catalog.json)
 
 ### Pacotes
 
@@ -21,7 +21,7 @@ Prompts independentes, fora dos pacotes, aplicados um a um. Na pasta do projeto,
 
 ```text
 Instale o prompt <ID> do agent-harness-hub seguindo
-https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.3.0/prompts/INSTALL.md
+https://raw.githubusercontent.com/douglaspands/agent-harness-hub/main/prompts/INSTALL.md
 ```
 
 O bloco do prompt é inserido em `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` entre marcadores; reinstalar atualiza só esse bloco.
@@ -49,7 +49,7 @@ Na pasta do projeto de destino, peça ao seu agente (Claude Code, Codex, Cursor,
 
 ```text
 Instale o pacote Autonomia e Segurança do agent-harness-hub seguindo
-https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.3.0/pacotes/autonomia-e-seguranca/INSTALL.md
+https://raw.githubusercontent.com/douglaspands/agent-harness-hub/main/pacotes/autonomia-e-seguranca/INSTALL.md
 Respeite as regras de confirmação do documento e me pergunte antes de alterar
 dependências ou qualquer coisa fora do projeto.
 ```
@@ -57,11 +57,11 @@ dependências ou qualquer coisa fora do projeto.
 Ou pelo terminal:
 
 ```bash
-uv add --dev "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@v0.3.0"
+uv add --dev "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@main"
 .venv/bin/ctx init
 ```
 
-Sem `uv`: `python3 -m venv .venv`, depois `.venv/bin/python -m pip install "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@v0.3.0"` e `.venv/bin/ctx init`. O Python da máquina serve só para criar o venv.
+Sem `uv`: `python3 -m venv .venv`, depois `.venv/bin/python -m pip install "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@main"` e `.venv/bin/ctx init`. O Python da máquina serve só para criar o venv.
 
 Depois: ajuste `policy.toml` (harnesses do time e comandos de build/teste), rode `.venv/bin/ctx rule sync` e reinicie o agente. No Codex, confie no hook em `/hooks`.
 
@@ -75,7 +75,7 @@ Depois: ajuste `policy.toml` (harnesses do time e comandos de build/teste), rode
 - **Toolchains Sandbox-Safe e Coaching One-Shot** — Python sempre do .venv (sem uv, python3 só cria o venv), Node via asdf, zero sondagem de binários e receitas One-Shot.
 - **Motor `ctx`**: `status`, `map`, `search` multi-query, `doctor` e `metrics`.
 
-**Por que a URL tem tag (`v0.3.0`) e não `main`:** o conteúdo fica imutável e auditável; um commit futuro na `main` não muda o que o seu agente obedece.
+**Fonte da verdade: a branch `main`.** Instalar ou reinstalar sempre traz o que está na `main`. Para atualizar um projeto: `uv lock --upgrade-package agent-harness-hub`, `uv sync` e `.venv/bin/ctx init` (o `policy.toml` e as skills do projeto são mantidos).
 
 Detalhes, arquitetura e matriz por harness: [`pacotes/autonomia-e-seguranca/GUIA.md`](pacotes/autonomia-e-seguranca/GUIA.md).
 <!-- PACKAGE:END -->
@@ -101,11 +101,9 @@ Detalhes, arquitetura e matriz por harness: [`pacotes/autonomia-e-seguranca/GUIA
 
 Crie `pacotes/<id>/INSTALL.md` com frontmatter (`title`, `summary`, `harnesses`) e, se quiser, um `GUIA.md`. Ele entra na tabela de pacotes ao rodar `uv run ctx prompt catalog`.
 
-**Publicar uma versão**
+**Publicar**
 
-1. Suba a versão em `pyproject.toml` e `src/ctx/__init__.py`.
-2. Rode `uv run ctx prompt catalog` e ajuste o tag em `pacotes/autonomia-e-seguranca/INSTALL.md`, `pacotes/autonomia-e-seguranca/GUIA.md`, `prompts/INSTALL.md` e `llms.txt` (os testes apontam o que faltar).
-3. Faça o commit e crie a tag (ex.: `v0.4.0`).
+A branch `main` é a fonte da verdade: não há tags. Abra um PR; ao fazer merge na `main`, o conteúdo já vale para todas as instalações e links do hub. Para registrar a evolução do motor, suba a versão em `pyproject.toml` e `src/ctx/__init__.py` (aparece em `ctx --version`).
 
 <details>
 <summary>📁 Estrutura do repositório</summary>

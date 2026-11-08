@@ -2,7 +2,7 @@
 
 Descoberta One-Shot com RAG local (`ctx`), cache de binários e receitas, toolchains Sandbox-Safe e guardrail multi-harness.
 
-> **Agente de IA instalando o pacote em um projeto?** Este guia é a referência conceitual. Para instalar, siga o [`INSTALL.md`](INSTALL.md) deste pacote (curto, imperativo, com regras de confirmação) — URL fixada: `https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.3.0/pacotes/autonomia-e-seguranca/INSTALL.md`. O código vem do pacote versionado via `ctx init`; não reescreva arquivos a partir deste texto.
+> **Agente de IA instalando o pacote em um projeto?** Este guia é a referência conceitual. Para instalar, siga o [`INSTALL.md`](INSTALL.md) deste pacote (curto, imperativo, com regras de confirmação) — URL: `https://raw.githubusercontent.com/douglaspands/agent-harness-hub/main/pacotes/autonomia-e-seguranca/INSTALL.md`. A branch `main` é a fonte da verdade; o código vem do pacote instalado via `ctx init`. Não reescreva arquivos a partir deste texto.
 
 Este guia é **100% agnóstico de repositório** e documenta a arquitetura completa, o racional técnico de cada ferramenta escolhida, os diagramas de fluxo (incluindo **Execução One-Shot / Zero-Retry**, **Coaching de Eficiência** e **bloqueio de encadeamento no shell**) e o passo a passo para replicar o motor **`ctx`** em **qualquer outro repositório ou projeto** em menos de 2 minutos.
 
@@ -221,15 +221,15 @@ Os arquivos `.agents/hooks.json`, `.claude/settings.json`, `AGENTS.md`, `CLAUDE.
 
 ## 6. Passo a Passo de Replicação Agnóstica (Bootstrap em < 2 Minutos)
 
-### Passo 1: Instalar o motor `ctx` no `.venv` do projeto (fixado por tag)
+### Passo 1: Instalar o motor `ctx` no `.venv` do projeto (a partir da `main`)
 
-O motor do pacote é distribuído como pacote Python versionado. Instale-o **no `.venv` do projeto** — nunca no Python global — usando um tag (`v0.3.0`), não `main`:
+O motor do pacote é distribuído como pacote Python instalado direto da branch `main` (a fonte da verdade). Instale-o **no `.venv` do projeto** — nunca no Python global. O `uv` grava o commit instalado no `uv.lock`; para atualizar, `uv lock --upgrade-package agent-harness-hub` e `uv sync`:
 
 | Situação | Comandos (um por chamada) |
 | :--- | :--- |
-| `uv` + `pyproject.toml` | `uv add --dev "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@v0.3.0"` |
-| `uv`, sem `pyproject.toml` (Node, Go, Rust…) | `uv venv .venv` → `uv pip install --python .venv/bin/python "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@v0.3.0"` |
-| **sem `uv`** | `python3 -m venv .venv` → `.venv/bin/python -m pip install "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@v0.3.0"` |
+| `uv` + `pyproject.toml` | `uv add --dev "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@main"` |
+| `uv`, sem `pyproject.toml` (Node, Go, Rust…) | `uv venv .venv` → `uv pip install --python .venv/bin/python "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@main"` |
+| **sem `uv`** | `python3 -m venv .venv` → `.venv/bin/python -m pip install "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@main"` |
 
 > **Regra do Python**: sem `uv`, o Python da máquina é usado **apenas** para criar o venv (`python3 -m venv .venv`, liberado em `[toolchains.python].bootstrap_allowed`). Todo o resto roda com `.venv/bin/python`; o guardrail nega qualquer outro uso de `python`/`python3` globais.
 

@@ -11,6 +11,12 @@ from pathlib import Path
 
 __version__ = "0.3.0"
 
+# A branch main é a fonte da verdade: instalações e documentos sempre apontam para ela (sem tags).
+REPO_URL = "https://github.com/douglaspands/agent-harness-hub"
+SOURCE_REF = "main"
+RAW_BASE = f"https://raw.githubusercontent.com/douglaspands/agent-harness-hub/{SOURCE_REF}"
+GIT_SPEC = f"git+{REPO_URL}@{SOURCE_REF}"
+
 
 def find_workspace_root(start_path: Path | None = None) -> Path:
     """Descobre a raiz do workspace a partir do diretório atual.
