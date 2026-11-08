@@ -113,6 +113,28 @@ def load_prompt(text: str, prompt_id: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------------------
 
 
+PACKAGES_DIR = "pacotes"
+
+
+def load_package(install_md: Path, repo_root: Path, prompts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Pacote = pasta em pacotes/<id>/ com INSTALL.md (frontmatter title/summary/harnesses) e, opcionalmente, GUIA.md."""
+    package_id = install_md.parent.name
+    meta, _ = parse_frontmatter(install_md.read_text(encoding="utf-8"))
+    for field in ("title", "summary"):
+        if not meta.get(field):
+            raise ValueError(f"pacote {package_id}: frontmatter do INSTALL.md sem '{field}'")
+    base = f"{PACKAGES_DIR}/{package_id}"
+    return {
+        "id": package_id,
+        "title": meta["title"],
+        "summary": meta["summary"],
+        "harnesses": meta.get("harnesses", []),
+        "path": f"{base}/INSTALL.md",
+        "guide": f"{base}/GUIA.md" if (repo_root / base / "GUIA.md").exists() else None,
+        "includes": [p["id"] for p in prompts if p["covered_by_kit"]],
+    }
+
+
 def build_catalog(repo_root: Path) -> dict[str, Any]:
     prompts_root = repo_root / PROMPTS_DIR
     entries = []
@@ -122,7 +144,8 @@ def build_catalog(repo_root: Path) -> dict[str, Any]:
         prompt = load_prompt(path.read_text(encoding="utf-8"), prompt_id_for(path, prompts_root))
         prompt.pop("snippet")
         entries.append(prompt)
-    return {"version": __version__, "prompts": entries}
+    packages = [load_package(p, repo_root, entries) for p in sorted((repo_root / PACKAGES_DIR).glob("*/INSTALL.md"))]
+    return {"version": __version__, "packages": packages, "prompts": entries}
 
 
 def render_catalog(repo_root: Path) -> str:
@@ -166,7 +189,9 @@ def render_readme_package(catalog: dict[str, Any]) -> str:
     pkg = f'agent-harness-hub @ {GIT_URL}@{tag}'
     included = [p for p in catalog["prompts"] if p["covered_by_kit"]]
     included_lines = "\n".join(f"- **{_cell(p['title'])}** — {_cell(p['summary'])}" for p in sorted(included, key=lambda x: x["title"]))
-    return f"""## 🛡️ Autonomia e Segurança
+    return f"""<a id="pacote-autonomia-e-seguranca"></a>
+
+## 🛡️ Pacote: Autonomia e Segurança
 
 Pacote completo para dar **mais autonomia ao agente sem abrir mão da segurança**. Instala tudo de uma vez: guardrail que bloqueia de verdade o que é perigoso, regras de Turno 0 para o agente acertar na 1ª tentativa e o motor local `ctx`.
 
@@ -205,13 +230,33 @@ Detalhes, arquitetura e matriz por harness: [`{PACKAGE_DIR}/GUIA.md`]({PACKAGE_D
 
 
 def render_readme_catalog(catalog: dict[str, Any]) -> str:
-    """Catálogo de prompts avulsos (os que não fazem parte de um pacote)."""
+    """Catálogo: pacotes (instalam tudo de uma vez) e prompts avulsos (os que não fazem parte de um pacote)."""
     tag = f"v{catalog['version']}"
+    packages = catalog.get("packages", [])
     prompts = [p for p in catalog["prompts"] if not p["covered_by_kit"]]
     lines = [
-        "## 📚 Prompts Avulsos",
+        "## 📚 Catálogo",
         "",
-        "Prompts independentes, fora do pacote, aplicados um a um. Na pasta do projeto, peça ao seu agente:",
+        f"**{len(packages)} pacote(s)** e **{len(prompts)} prompt(s) avulso(s)** · versão `{tag}` · catálogo em JSON: [`prompts/catalog.json`](prompts/catalog.json)",
+        "",
+        "### Pacotes",
+        "",
+        "Instalam tudo de uma vez: guardrail, política, instruções e motor `ctx`.",
+        "",
+        "| Pacote | ID | O que faz | Harnesses | Como instalar |",
+        "| :--- | :--- | :--- | :--- | :--- |",
+    ]
+    for pkg in packages:
+        harnesses = ", ".join(pkg.get("harnesses") or []) or "Todos"
+        lines.append(
+            f"| [**{_cell(pkg['title'])}**]({pkg['path']}) | `{pkg['id']}` | {_cell(pkg['summary'])} | {_cell(harnesses)} "
+            f"| [Instalar ↓](#pacote-{pkg['id']}) |"
+        )
+    lines += [
+        "",
+        "### Prompts avulsos",
+        "",
+        "Prompts independentes, fora dos pacotes, aplicados um a um. Na pasta do projeto, peça ao seu agente:",
         "",
         "```text",
         "Instale o prompt <ID> do agent-harness-hub seguindo",
@@ -230,7 +275,7 @@ def render_readme_catalog(catalog: dict[str, Any]) -> str:
     for category in sorted(by_category):
         lines += [
             "",
-            f"### `{category}`",
+            f"#### `{category}`",
             "",
             "| Prompt | ID para aplicar | O que faz | Harnesses | Requer |",
             "| :--- | :--- | :--- | :--- | :---: |",
@@ -274,6 +319,10 @@ def read_source(source: str, rel_path: str) -> str:
 
 def list_prompts(source: str = DEFAULT_SOURCE) -> list[dict[str, Any]]:
     return json.loads(read_source(source, CATALOG_PATH))["prompts"]
+
+
+def list_packages(source: str = DEFAULT_SOURCE) -> list[dict[str, Any]]:
+    return json.loads(read_source(source, CATALOG_PATH)).get("packages", [])
 
 
 # --------------------------------------------------------------------------------------

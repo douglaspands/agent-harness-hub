@@ -15,6 +15,7 @@ from ctx.prompts import (
     add_prompts,
     build_catalog,
     extract_snippet,
+    list_packages,
     list_prompts,
     parse_frontmatter,
     read_source,
@@ -53,6 +54,23 @@ class TestCatalog(unittest.TestCase):
             else:
                 self.assertIn(f"`{entry['id']}`", readme)
         self.assertIn("pacotes/autonomia-e-seguranca/INSTALL.md", readme)
+        # Todo pacote aparece no catálogo (antes da seção de instalação), com ID e link de instalação
+        catalog_start = readme.index("## 📚 Catálogo")
+        for pkg in build_catalog(REPO)["packages"]:
+            self.assertIn(f"`{pkg['id']}`", readme[catalog_start:])
+            self.assertIn(f'<a id="pacote-{pkg["id"]}"></a>', readme)
+            self.assertLess(catalog_start, readme.index(f'<a id="pacote-{pkg["id"]}"></a>'))
+
+    def test_packages_in_catalog(self) -> None:
+        packages = build_catalog(REPO)["packages"]
+        self.assertEqual([p["id"] for p in packages], ["autonomia-e-seguranca"])
+        pkg = packages[0]
+        self.assertEqual(pkg["title"], "Autonomia e Segurança")
+        self.assertEqual(pkg["path"], "pacotes/autonomia-e-seguranca/INSTALL.md")
+        self.assertEqual(pkg["guide"], "pacotes/autonomia-e-seguranca/GUIA.md")
+        self.assertIn("tooling/ferramentas-nativas-de-arquivo", pkg["includes"])
+        self.assertNotIn("graph-engineering/dag-fanout-fanin", pkg["includes"])
+        self.assertEqual(list_packages(SOURCE), packages)
 
     def test_update_readme_requires_markers(self) -> None:
         with self.assertRaises(ValueError):

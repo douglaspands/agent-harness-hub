@@ -1,3 +1,9 @@
+---
+title: Autonomia e Segurança
+summary: Mais autonomia ao agente sem abrir mão da segurança — guardrail com bloqueio real, menos prompts de permissão, Python sempre do .venv, descoberta One-Shot, ferramentas nativas de arquivo e Container-First.
+harnesses: [Claude Code, Codex, Cursor, Gemini CLI, Antigravity]
+---
+
 # Instalar o pacote Autonomia e Segurança (agent-harness-hub v0.3.0) neste projeto
 
 > **Para o agente de IA que está lendo isto (qualquer vendor):** siga os passos em ordem, um comando atômico por chamada (sem `&&`, `;` ou `|` para outro shell). O código vem do pacote versionado `v0.3.0`; **não** reescreva arquivos a partir deste texto nem de outra página.

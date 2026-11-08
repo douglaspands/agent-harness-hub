@@ -1,5 +1,27 @@
 {
   "version": "0.3.0",
+  "packages": [
+    {
+      "id": "autonomia-e-seguranca",
+      "title": "Autonomia e Segurança",
+      "summary": "Mais autonomia ao agente sem abrir mão da segurança — guardrail com bloqueio real, menos prompts de permissão, Python sempre do .venv, descoberta One-Shot, ferramentas nativas de arquivo e Container-First.",
+      "harnesses": [
+        "Claude Code",
+        "Codex",
+        "Cursor",
+        "Gemini CLI",
+        "Antigravity"
+      ],
+      "path": "pacotes/autonomia-e-seguranca/INSTALL.md",
+      "guide": "pacotes/autonomia-e-seguranca/GUIA.md",
+      "includes": [
+        "discovery/descoberta-em-1-turno",
+        "governance-and-guardrails/container-first-e-btrfs",
+        "toolchains-and-executors/enforcement-toolchains-canonicos",
+        "tooling/ferramentas-nativas-de-arquivo"
+      ]
+    }
+  ],
   "prompts": [
     {
       "id": "discovery/descoberta-em-1-turno",

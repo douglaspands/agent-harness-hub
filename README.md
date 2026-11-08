@@ -2,8 +2,44 @@
 
 Pacotes e prompts prontos para aplicar em qualquer projeto que use agentes de IA (Claude Code, Codex, Cursor, Gemini CLI, Antigravity e afins).
 
+<!-- CATALOG:START — gerado por `ctx prompt catalog`; não edite à mão -->
+## 📚 Catálogo
+
+**1 pacote(s)** e **1 prompt(s) avulso(s)** · versão `v0.3.0` · catálogo em JSON: [`prompts/catalog.json`](prompts/catalog.json)
+
+### Pacotes
+
+Instalam tudo de uma vez: guardrail, política, instruções e motor `ctx`.
+
+| Pacote | ID | O que faz | Harnesses | Como instalar |
+| :--- | :--- | :--- | :--- | :--- |
+| [**Autonomia e Segurança**](pacotes/autonomia-e-seguranca/INSTALL.md) | `autonomia-e-seguranca` | Mais autonomia ao agente sem abrir mão da segurança — guardrail com bloqueio real, menos prompts de permissão, Python sempre do .venv, descoberta One-Shot, ferramentas nativas de arquivo e Container-First. | Claude Code, Codex, Cursor, Gemini CLI, Antigravity | [Instalar ↓](#pacote-autonomia-e-seguranca) |
+
+### Prompts avulsos
+
+Prompts independentes, fora dos pacotes, aplicados um a um. Na pasta do projeto, peça ao seu agente:
+
+```text
+Instale o prompt <ID> do agent-harness-hub seguindo
+https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.3.0/prompts/INSTALL.md
+```
+
+O bloco do prompt é inserido em `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` entre marcadores; reinstalar atualiza só esse bloco.
+Com o pacote instalado, também dá para usar `.venv/bin/ctx prompt add <ID>`.
+
+#### `graph-engineering`
+
+| Prompt | ID para aplicar | O que faz | Harnesses | Requer |
+| :--- | :--- | :--- | :--- | :---: |
+| [**Graph Engineering (DAG Fan-Out + Fan-In)**](prompts/graph-engineering/dag-fanout-fanin.md) | `graph-engineering/dag-fanout-fanin` | Proíbe encadeamento shell (&&, ;, &) e estrutura paralelismo em chamadas atômicas no mesmo turno ou DAG de subagentes. | Claude Code, Antigravity, Swarm, LangGraph, AutoGen | — |
+<!-- CATALOG:END -->
+
+---
+
 <!-- PACKAGE:START — gerado por `ctx prompt catalog`; não edite à mão -->
-## 🛡️ Autonomia e Segurança
+<a id="pacote-autonomia-e-seguranca"></a>
+
+## 🛡️ Pacote: Autonomia e Segurança
 
 Pacote completo para dar **mais autonomia ao agente sem abrir mão da segurança**. Instala tudo de uma vez: guardrail que bloqueia de verdade o que é perigoso, regras de Turno 0 para o agente acertar na 1ª tentativa e o motor local `ctx`.
 
@@ -46,28 +82,6 @@ Detalhes, arquitetura e matriz por harness: [`pacotes/autonomia-e-seguranca/GUIA
 
 ---
 
-<!-- CATALOG:START — gerado por `ctx prompt catalog`; não edite à mão -->
-## 📚 Prompts Avulsos
-
-Prompts independentes, fora do pacote, aplicados um a um. Na pasta do projeto, peça ao seu agente:
-
-```text
-Instale o prompt <ID> do agent-harness-hub seguindo
-https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.3.0/prompts/INSTALL.md
-```
-
-O bloco do prompt é inserido em `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` entre marcadores; reinstalar atualiza só esse bloco.
-Com o pacote instalado, também dá para usar `.venv/bin/ctx prompt add <ID>`.
-
-### `graph-engineering`
-
-| Prompt | ID para aplicar | O que faz | Harnesses | Requer |
-| :--- | :--- | :--- | :--- | :---: |
-| [**Graph Engineering (DAG Fan-Out + Fan-In)**](prompts/graph-engineering/dag-fanout-fanin.md) | `graph-engineering/dag-fanout-fanin` | Proíbe encadeamento shell (&&, ;, &) e estrutura paralelismo em chamadas atômicas no mesmo turno ou DAG de subagentes. | Claude Code, Antigravity, Swarm, LangGraph, AutoGen | — |
-<!-- CATALOG:END -->
-
----
-
 ## ✍️ Como Contribuir
 
 **Novo prompt avulso**
@@ -77,11 +91,15 @@ Com o pacote instalado, também dá para usar `.venv/bin/ctx prompt add <ID>`.
    - `title`: nome curto exibido no catálogo;
    - `summary`: uma frase sobre o que o prompt muda no agente;
    - `harnesses`: lista de harnesses testados;
-   - `covered_by_kit`: `true` só se o prompt fizer parte do pacote Autonomia e Segurança (aí ele aparece na lista do pacote, não no catálogo de avulsos);
+   - `covered_by_kit`: `true` só se o prompt fizer parte do pacote Autonomia e Segurança (aí ele aparece na lista do pacote, não entre os avulsos);
    - `requires`: `[kit]` se as instruções dependerem do pacote instalado.
 3. Escreva a instrução **dentro do bloco** ```` ```markdown ```` da seção `## Snippet de Prompt / Instrução de Sistema`. Só esse bloco é instalado.
 4. Rode `uv run ctx prompt catalog` (atualiza `prompts/catalog.json` e este README).
 5. Rode `uv run python -m unittest discover -s tests`. Os testes falham se faltar frontmatter ou snippet, se o catálogo/README estiver desatualizado ou se algum documento citar outra versão.
+
+**Novo pacote**
+
+Crie `pacotes/<id>/INSTALL.md` com frontmatter (`title`, `summary`, `harnesses`) e, se quiser, um `GUIA.md`. Ele entra na tabela de pacotes ao rodar `uv run ctx prompt catalog`.
 
 **Publicar uma versão**
 
@@ -101,7 +119,7 @@ agent-harness-hub/
 │       └── GUIA.md                    # Arquitetura, racional e matriz por harness
 ├── prompts/
 │   ├── <categoria>/<nome>.md          # Prompts (frontmatter + snippet)
-│   ├── catalog.json                   # Catálogo gerado
+│   ├── catalog.json                   # Catálogo gerado (pacotes + prompts)
 │   └── INSTALL.md                     # Instalação de prompts avulsos (para agentes de IA)
 ├── llms.txt                           # Índice para LLMs (llmstxt.org)
 ├── templates/                         # prompt.md.example e policy.toml.example

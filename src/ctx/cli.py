@@ -15,7 +15,7 @@ from typing import Sequence
 from ctx import WORKSPACE_ROOT, __version__
 from ctx.installer import init_project
 from ctx.metrics import analyze, transcripts_dir_for
-from ctx.prompts import DEFAULT_SOURCE, add_prompts, list_prompts, remove_prompts, write_catalog
+from ctx.prompts import DEFAULT_SOURCE, add_prompts, list_packages, list_prompts, remove_prompts, write_catalog
 from ctx.policy import doctor, resolve_binaries, sync_rules
 from ctx.rag import DEFAULT_PREVIEW_LINES, get_map, index_workspace, search_many, status
 
@@ -169,9 +169,14 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_prompt(args: argparse.Namespace) -> int:
     if args.prompt_cmd == "list":
-        prompts = list_prompts(args.source)
-        rows = [[p["id"], "sim" if p["covered_by_kit"] else "não", p["summary"]] for p in prompts]
-        print(format_table(rows, ["ID", "No kit", "Resumo"]))
+        packages = list_packages(args.source)
+        if packages:
+            print("📦 Pacotes (instalam tudo de uma vez: siga o INSTALL.md do pacote ou rode `ctx init`)\n")
+            print(format_table([[p["id"], p["summary"]] for p in packages], ["ID", "Resumo"]))
+            print()
+        prompts = [p for p in list_prompts(args.source) if not p["covered_by_kit"]]
+        print("🧩 Prompts avulsos (`ctx prompt add <ID>`)\n")
+        print(format_table([[p["id"], p["summary"]] for p in prompts], ["ID", "Resumo"]))
         return 0
     if args.prompt_cmd == "catalog":
         path = write_catalog(WORKSPACE_ROOT)
