@@ -2,7 +2,7 @@
 title: Graph Engineering (DAG Fan-Out + Fan-In)
 summary: Proíbe encadeamento shell (&&, ;, &) e estrutura paralelismo em chamadas atômicas no mesmo turno ou DAG de subagentes.
 harnesses: [Claude Code, Antigravity, Swarm, LangGraph, AutoGen]
-covered_by_kit: true
+covered_by_kit: false
 ---
 
 # Prompt: Graph Engineering (DAG Fan-Out + Consolidador Fan-In)

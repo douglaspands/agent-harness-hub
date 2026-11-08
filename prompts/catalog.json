@@ -46,7 +46,7 @@
         "LangGraph",
         "AutoGen"
       ],
-      "covered_by_kit": true,
+      "covered_by_kit": false,
       "requires": [],
       "path": "prompts/graph-engineering/dag-fanout-fanin.md"
     },

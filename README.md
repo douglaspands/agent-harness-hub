@@ -56,7 +56,7 @@ me pergunte antes de alterar dependências ou qualquer coisa fora do projeto.
 
 | Prompt | ID para aplicar | O que faz | Harnesses | Requer | Kit |
 | :--- | :--- | :--- | :--- | :---: | :---: |
-| [**Graph Engineering (DAG Fan-Out + Fan-In)**](prompts/graph-engineering/dag-fanout-fanin.md) | `graph-engineering/dag-fanout-fanin` | Proíbe encadeamento shell (&&, ;, &) e estrutura paralelismo em chamadas atômicas no mesmo turno ou DAG de subagentes. | Claude Code, Antigravity, Swarm, LangGraph, AutoGen | — | ✅ |
+| [**Graph Engineering (DAG Fan-Out + Fan-In)**](prompts/graph-engineering/dag-fanout-fanin.md) | `graph-engineering/dag-fanout-fanin` | Proíbe encadeamento shell (&&, ;, &) e estrutura paralelismo em chamadas atômicas no mesmo turno ou DAG de subagentes. | Claude Code, Antigravity, Swarm, LangGraph, AutoGen | — | — |
 
 ### `toolchains-and-executors`
 

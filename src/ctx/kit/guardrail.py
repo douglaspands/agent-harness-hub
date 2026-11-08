@@ -446,8 +446,8 @@ def evaluate_shell_command(
     if has_chaining_operators(cmd_clean):
         return (
             "deny",
-            "Encadeamento de comandos shell (&&, ||, ;, &, subshells) é proibido. "
-            "Execute comandos atômicos (várias chamadas no mesmo turno) ou utilize Graph Engineering (DAG de subagentes).",
+            "Encadeamento de comandos shell (&&, ||, ;, &, subshells) é proibido: cada comando precisa ser avaliado "
+            "sozinho pelo guardrail. Execute um comando por chamada.",
         )
 
     raw_tokens = tokenize(cmd_clean)

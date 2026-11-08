@@ -2,7 +2,7 @@
 
 > **Agente de IA instalando o kit em um projeto?** Este guia é a referência conceitual. Para instalar, siga o [`BOOTSTRAP.md`](../BOOTSTRAP.md) (curto, imperativo, com regras de confirmação) — URL fixada: `https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.2.0/BOOTSTRAP.md`. O código vem do pacote versionado via `ctx init`; não reescreva arquivos a partir deste texto.
 
-Este guia é **100% agnóstico de repositório** e documenta a arquitetura completa, o racional técnico de cada ferramenta escolhida, os diagramas de fluxo (incluindo **Execução One-Shot / Zero-Retry**, **Coaching de Eficiência** e **Graph Engineering** para paralelismo sem encadeamento no shell) e o passo a passo para replicar o motor **`ctx`** em **qualquer outro repositório ou projeto** em menos de 2 minutos.
+Este guia é **100% agnóstico de repositório** e documenta a arquitetura completa, o racional técnico de cada ferramenta escolhida, os diagramas de fluxo (incluindo **Execução One-Shot / Zero-Retry**, **Coaching de Eficiência** e **bloqueio de encadeamento no shell**) e o passo a passo para replicar o motor **`ctx`** em **qualquer outro repositório ou projeto** em menos de 2 minutos.
 
 ---
 
@@ -21,9 +21,9 @@ O sistema foi desenhado com **zero dependências externas** (100% biblioteca pad
    - A seção `[toolchains.python]` opera de forma **Sandbox-Safe**: bloqueia estritamente binários globais do sistema (`python`, `python3`, `/usr/bin/python*`, `/usr/local/bin/python*`), mas legitima tanto `uv run` quanto os executáveis locais do próprio ambiente virtual do workspace (`.venv/bin/ctx` e `.venv/bin/python`), garantindo acerto imediato na **1ª tentativa** dentro ou fora de sandbox. Para Node.js, exige os shims do `asdf` (`~/.asdf/shims` ou `asdf exec`).
 4. **Guardrail com Coaching de Eficiência One-Shot (`[commands.inefficient_variants]`)**:
    - Quando um agente tenta rodar um comando "cru" ou sem escopo que geraria poluição de contexto ou uma 2ª chamada (`grep -r`, `find .`, `ls -R`, `tree` sem `-L`, `git log` sem `-n`), o `scripts/guardrail.py` retorna **`deny` instrutivo** informando exatamente a Receita One-Shot parametrizada (`rg -n --heading -C 2`, `fd --max-depth 3 --exclude archive`, `tree -L 2 --dirsfirst -I ...`, `git log --oneline --decorate -n 10`).
-5. **Autonomia com Segurança Multi-Harness + Graph Engineering (`scripts/guardrail.py` em `< 5ms`)**:
-   - Uma única fonte de verdade (`policy.toml`) compila as regras simultaneamente para Antigravity (`.agents/hooks.json`, `GEMINI.md`) e Claude Code (`.claude/settings.json`, `CLAUDE.md`), além do documento mestre `AGENTS.md`.
-   - Comandos encadeados no shell (`&&`, `||`, `;`, `&`, subshells) são **recusados (`deny`)**, direcionando toda paralelização para o **Graph Engineering** nativo do harness (DAG *Fan-Out* paralelo + **Agente Consolidador** *Fan-In*).
+5. **Autonomia com Segurança Multi-Harness (`scripts/guardrail.py` em `< 5ms`)**:
+   - Uma única fonte de verdade (`policy.toml`) compila as regras para Claude Code, Codex, Cursor, Gemini CLI e Antigravity (hooks de cada um + `CLAUDE.md`, `GEMINI.md` e o documento mestre `AGENTS.md`).
+   - Comandos encadeados no shell (`&&`, `||`, `;`, `&`, subshells) são **recusados (`deny`)**: cada comando roda numa chamada própria, para ser avaliado e auditado sozinho pelo guardrail (um `cmd_seguro && cmd_perigoso` não passa escondido).
    - **Menos prompts sem perder segurança (decisão `defer`)**: casos de baixo risco (comando ou filtro de pipe fora da whitelist, leitura fora do workspace) não geram mais `ask` no Claude Code — o hook devolve o controle ao modo de permissão nativo (`--permission-mode auto` + regras do `.claude/settings.json`). O `ask` forte continua para operações sensíveis (ver Seção 3).
 
 ### Diagrama 1: Arquitetura de Descoberta One-Shot em 1 Turno (Status + Mapa + Busca Multi-Query + Receitas One-Shot)
@@ -89,7 +89,7 @@ O hook universal `scripts/guardrail.py` intercepta chamadas `PreToolUse` tanto n
 - **Diretórios de trabalho do harness liberados (`paths.harness_allow`)**:
   - Leitura e escrita em `/tmp/claude-<uid>/**` (scratchpad), `~/.claude/projects/**` (memória) e `~/.claude/plans/**` (planos) recebem `allow`. Se `paths.harness_allow` não estiver no `policy.toml`, esses três padrões são usados por padrão.
 - **Bloqueio Estrito (`deny`) de Encadeamento de Comandos**:
-  - Qualquer comando contendo `&&`, `||`, `;`, `&` (background), quebras de linha ou subshells (`$()`, `` ` ``) recebe **`deny` imediato**, instruindo o agente a executar comandos atômicos ou usar **Graph Engineering**.
+  - Qualquer comando contendo `&&`, `||`, `;`, `&` (background), quebras de linha ou subshells (`$()`, `` ` ``) recebe **`deny` imediato**, instruindo o agente a executar um comando por chamada.
 - **Enforcement Agnóstico de `[toolchains]` Sandbox-Safe (`deny` para globais, `allow` para `.venv/bin/` e `uv run`)**:
   - Invocações diretas de binários globais do sistema (`python`, `python3`, `/usr/bin/python*`, `/usr/bin/node`, `/usr/bin/npm`) recebem **`deny` imediato**.
   - Já `.venv/bin/ctx`, `.venv/bin/python`, `uv run` e shims do `asdf` (`~/.asdf/shims/*`, `asdf exec`) recebem **`allow` imediato**.
@@ -124,7 +124,7 @@ flowchart TD
     ToolType -->|"Comando Shell (Bash / run_command)"| CheckCmdDeny{"Padrão destrutivo em commands.deny? (rm -rf /, mkfs, curl|bash)"}
     CheckCmdDeny -->|"Sim"| Deny
     CheckCmdDeny -->|"Não"| CheckChain{"Possui &&, ||, ;, & ou subshell $() / ``?"}
-    CheckChain -->|"Sim"| DenyChain["DENY (Proibido Encadeamento: Use Comandos Atômicos ou Graph Engineering)"]
+    CheckChain -->|"Sim"| DenyChain["DENY (Proibido Encadeamento: um comando por chamada)"]
     CheckChain -->|"Não"| SplitPipe["Divide segmentos por Pipe simples '|'"]
     SplitPipe --> CheckToolchain{"Viola [toolchains].forbidden_direct? (python3 global ou /usr/bin/node)"}
     CheckToolchain -->|"Sim"| DenyTC["DENY (Use .venv/bin/python, .venv/bin/ctx, uv run ou asdf)"]
@@ -145,50 +145,7 @@ flowchart TD
 
 ---
 
-## 4. Paralelismo via Graph Engineering (DAG Fan-Out + Agente Consolidador Fan-In)
-
-Como o encadeamento de comandos no shell (`&&`, `||`, `;`, `&`) é bloqueado (`deny`) por segurança e auditabilidade, a arquitetura adota **Graph Engineering nativo do harness da IA** sempre que uma tarefa exige paralelismo:
-
-1. **Nível 1 — Paralelismo Leve (Tool-Level Fan-Out)**:
-   - Para executar múltiplos comandos atômicos de diagnóstico ou ler diferentes trechos de arquivos, o agente emite **múltiplas chamadas de ferramentas independentes no mesmo turno**. O próprio harness executa cada chamada em paralelo, passando cada comando individualmente pelo `guardrail.py`.
-2. **Nível 2 — Paralelismo Complexo (Subagent DAG Fan-Out + Agente Consolidador Fan-In)**:
-   - Para tarefas amplas (múltiplos módulos, pesquisa + implementação + testes independentes), o fluxo é modelado como um **Grafo Acíclico Direcionado (DAG)**:
-     - **Nó Orquestrador (Root Planner)**: Executa `.venv/bin/ctx status`, `ctx map` e `ctx search` no Turno 1 e particiona o trabalho em pacotes independentes (garantindo que dois nós paralelos nunca editem o mesmo arquivo).
-     - **Nós Trabalhadores em Paralelo (Fan-Out Workers)**: O Orquestrador dispara subagentes especializados concorrentes (`invoke_subagent` no Antigravity ou `Task`/`Agent` no Claude Code), cada um com janela de contexto limpa e objetivo cirúrgico.
-     - **Agente Consolidador (Fan-In Synthesizer)**: Recebe reativamente as respostas de todos os subagentes (sem loops de polling), integra os artefatos, executa a bateria global de validação (`.venv/bin/python -m unittest discover -s tests -v` e `.venv/bin/ctx doctor`) e entrega o resultado unificado.
-
-### Diagrama 3: Graph Engineering (DAG Fan-Out Paralelo + Agente Consolidador Fan-In)
-
-```mermaid
-flowchart TD
-    UserReq["Solicitação Complexa do Usuário"] --> Orchestrator["Nó Orquestrador (Root)\nTurno 1: .venv/bin/ctx status / ctx map / ctx search"]
-    Orchestrator --> Partition{"Tipo de Paralelismo?"}
-
-    subgraph LightDAG["Paralelismo Leve (Mesmo Turno)"]
-        Partition -->|"Comandos / Leituras Rápidas"| ToolA["Tool Call 1: Comando Atômico A"]
-        Partition -->|"Comandos / Leituras Rápidas"| ToolB["Tool Call 2: Comando Atômico B"]
-        Partition -->|"Comandos / Leituras Rápidas"| ToolC["Tool Call 3: Leitura de Slice C"]
-    end
-
-    subgraph SubagentDAG["Paralelismo Complexo (Subagent Graph Engineering)"]
-        Partition -->|"Frentes Independentes de Trabalho"| Worker1["Subagente 1 (Fan-Out)\nEscopo Isolado: Módulo / Pesquisa A"]
-        Partition -->|"Frentes Independentes de Trabalho"| Worker2["Subagente 2 (Fan-Out)\nEscopo Isolado: Módulo / Implementação B"]
-        Partition -->|"Frentes Independentes de Trabalho"| Worker3["Subagente 3 (Fan-Out)\nEscopo Isolado: Testes / Documentação C"]
-    end
-
-    ToolA --> Consolidator
-    ToolB --> Consolidator
-    ToolC --> Consolidator
-    Worker1 -->|"Wakeup Reativo (Sem Polling)"| Consolidator
-    Worker2 -->|"Wakeup Reativo (Sem Polling)"| Consolidator
-    Worker3 -->|"Wakeup Reativo (Sem Polling)"| Consolidator
-
-    Consolidator["Agente Consolidador (Fan-In / Synthesizer)\nReconcilia mudanças + Valida: .venv/bin/ctx doctor & testes"] --> FinalOut["Resposta Consolidada e Verificada"]
-```
-
----
-
-## 5. Estratégia Container-First (`podman`/`docker`) e Armazenamento Btrfs (`~/data`)
+## 4. Estratégia Container-First (`podman`/`docker`) e Armazenamento Btrfs (`~/data`)
 
 A política estabelece duas regras operacionais de infraestrutura que protegem o sistema host e maximizam a performance de I/O:
 
@@ -202,7 +159,7 @@ A política estabelece duas regras operacionais de infraestrutura que protegem o
    - `~/data` é o caminho de exemplo usado neste guia; ajuste-o em `[storage.btrfs_nocow]` conforme a máquina de destino. Em sistemas sem Btrfs, a regra pode ser omitida.
    - O guardrail mantém `~/data` com decisão `ask` / `force_ask`, garantindo que o usuário tenha sempre a palavra final.
 
-### Diagrama 4: Fluxo Container-First e Decisão de Armazenamento Btrfs (`~/data`)
+### Diagrama 3: Fluxo Container-First e Decisão de Armazenamento Btrfs (`~/data`)
 
 ```mermaid
 flowchart TD
@@ -225,9 +182,9 @@ flowchart TD
 
 ---
 
-## 6. Arquivos que Compõem o Kit Portável
+## 5. Arquivos que Compõem o Kit Portável
 
-O `ctx init` (Seção 7) instala estes arquivos em qualquer repositório; esta é a estrutura resultante e a do próprio hub:
+O `ctx init` (Seção 6) instala estes arquivos em qualquer repositório; esta é a estrutura resultante e a do próprio hub:
 
 ```text
 meu-repositorio/
@@ -249,7 +206,7 @@ meu-repositorio/
 ├── .agents/
 │   └── skills/
 │       └── workspace-ctx/
-│           └── SKILL.md                         # Skill universal (1º turno One-Shot, toolchains Sandbox-Safe, Graph Engineering, Container-First e ~/data)
+│           └── SKILL.md                         # Skill universal (1º turno One-Shot, toolchains Sandbox-Safe, comandos atômicos, ferramentas de arquivo, Container-First e ~/data)
 └── .claude/
     └── skills/
         └── workspace-ctx/
@@ -260,7 +217,7 @@ Os arquivos `.agents/hooks.json`, `.claude/settings.json`, `AGENTS.md`, `CLAUDE.
 
 ---
 
-## 7. Passo a Passo de Replicação Agnóstica (Bootstrap em < 2 Minutos)
+## 6. Passo a Passo de Replicação Agnóstica (Bootstrap em < 2 Minutos)
 
 ### Passo 1: Instalar o motor `ctx` no `.venv` do projeto (fixado por tag)
 
@@ -349,7 +306,7 @@ No diretório do repositório de destino, execute os comandos atômicos (via `.v
 Pronto! O comando `.venv/bin/ctx rule sync` terá criado automaticamente:
 - `.ctx/bins.json` com todos os binários, toolchains Sandbox-Safe e Receitas One-Shot resolvidos da máquina;
 - `.claude/settings.json` e `.agents/hooks.json` apontando dinamicamente para o `scripts/guardrail.py` do repositório;
-- `AGENTS.md`, `CLAUDE.md` e `GEMINI.md` contendo o mapa de binários verificados, o catálogo de Receitas One-Shot, as regras de `[toolchains]` Sandbox-Safe, o fluxo de **Graph Engineering**, a política Container-First (`podman`/`docker`) e a instrução de consulta sobre `~/data`.
+- `AGENTS.md`, `CLAUDE.md` e `GEMINI.md` contendo o mapa de binários verificados, o catálogo de Receitas One-Shot, as regras de `[toolchains]` Sandbox-Safe, a regra de comandos atômicos, as ferramentas nativas de arquivo, a política Container-First (`podman`/`docker`) e a instrução de consulta sobre `~/data`.
 
 #### Formato do hook no `.claude/settings.json`
 
@@ -399,7 +356,7 @@ O ganho da decisão `defer` só aparece se o harness tiver um modo de permissão
 
 ---
 
-## 8. Como Configurar `[toolchains]` Sandbox-Safe e Receitas One-Shot no `policy.toml`
+## 7. Como Configurar `[toolchains]` Sandbox-Safe e Receitas One-Shot no `policy.toml`
 
 A seção `[toolchains]` e as tabelas `[commands.one_shot_recipes]` e `[commands.inefficient_variants]` em `policy.toml` são totalmente agnósticas:
 
@@ -463,7 +420,7 @@ reason = "Node.js/npm/npx devem usar a versão gerenciada pelo asdf (~/.asdf/shi
 
 ---
 
-## 9. Como Medir Performance e Economia de Tokens
+## 8. Como Medir Performance e Economia de Tokens
 
 ### Medição de Latência Local (`< 15ms`)
 Os comandos `ctx status`, `ctx search`, `ctx map` e `ctx bins` informam o tempo exato de execução em milissegundos no cabeçalho da saída:
@@ -492,13 +449,13 @@ Os comandos `ctx status`, `ctx search`, `ctx map` e `ctx bins` informam o tempo 
 | Retries por falha de sandbox (`uv: command not found` / `exit 127`) | 1 a 2 retries antes de achar `.venv/bin/` | **Zero** (`.venv/bin/ctx` e `.venv/bin/python` são nativamente permitidos e documentados) |
 | Re-execução de comandos para adicionar mais flags | Frequente (`tree` → `tree -L 2`, `git log` → `git log -n 10`) | **Zero** (Receitas One-Shot + Guardrail Coaching interceptam chamadas incompletas) |
 | Prompts de confirmação em comandos de baixo risco | Um `ask` para cada comando fora da whitelist ou leitura externa | **Delegados** ao modo `auto` do Claude Code (`defer`); `ask` forte só para operações sensíveis |
-| Paralelismo e execução de múltiplas tarefas | Gambiarra frágil no shell (`cmd1 && cmd2 &`) | **Graph Engineering** (DAG Fan-Out paralelo + Agente Consolidador Fan-In) |
+| Comandos perigosos escondidos em encadeamentos | `cmd_seguro && cmd_perigoso` aprovado como um todo | **Bloqueado**: um comando por chamada, cada um avaliado pelo guardrail |
 | Poluição do sistema operacional host | Instalações globais avulsas (`dnf`/`apt`/`pip`) | **Zero** (Container-First via `podman`/`docker`) |
 | Degradação Btrfs em bancos de dados e volumes | Alta fragmentação por Copy-on-Write | **Eliminada** via prompt para uso de `~/data` (`chattr +C` / No-COW) |
 
 ---
 
-## 10. Suporte Multi-Harness (Claude Code, Codex, Cursor, Gemini CLI, Antigravity)
+## 9. Suporte Multi-Harness (Claude Code, Codex, Cursor, Gemini CLI, Antigravity)
 
 O mesmo `scripts/guardrail.py` atende todos os harnesses: ele detecta o harness pelo formato do evento e responde no protocolo de cada um. O `ctx rule sync` gera o hook no arquivo de configuração **do projeto** de cada harness listado em `[harnesses].enabled`, mesclando com o que já existe (outras chaves e hooks de terceiros são preservados).
 
@@ -518,7 +475,7 @@ Fontes: [Codex hooks](https://developers.openai.com/codex/hooks), [Cursor hooks]
 
 ---
 
-## 11. Ferramentas Nativas de Arquivo (`[file_tools]`) e Validação com `ctx metrics`
+## 10. Ferramentas Nativas de Arquivo (`[file_tools]`) e Validação com `ctx metrics`
 
 Agentes frequentemente leem (`cat`, `head`, `tail`, `sed -n`) e escrevem arquivos (`sed -i`, `>`, `>>`, heredoc, `tee`) pelo shell. Isso despeja arquivos inteiros no contexto, gera prompts de permissão, escapa das checagens de caminho das ferramentas de arquivo e perde a verificação de trecho exato das ferramentas de edição. Parte da causa é o próprio harness: no Claude Code em modo auto, o prompt de sistema permite usar o Bash para leituras, então instruções do projeto competem com ele.
 

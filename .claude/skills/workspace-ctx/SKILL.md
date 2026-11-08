@@ -1,6 +1,6 @@
 ---
 name: workspace-ctx
-description: Aceleração cirúrgica de contexto em 1 turno (ctx status/map/search One-Shot, cache de binários e receitas, toolchains Sandbox-Safe e Graph Engineering). Ative no Turno 1 de qualquer tarefa no repositório.
+description: Autonomia com segurança no repositório (ctx status/map/search One-Shot, cache de binários e receitas, toolchains Sandbox-Safe, comandos atômicos e ferramentas nativas de arquivo). Ative no Turno 1 de qualquer tarefa no repositório.
 ---
 
 # Workspace CTX: Motor de Aceleração e Governança
@@ -27,10 +27,9 @@ Esta skill instrui o agente a operar com máxima eficiência de contexto, acerta
 - `ask`: `sudo`, instalação de pacotes, `systemctl start/stop/restart`, `git push`/`commit`, wrappers (`env`, `xargs`, `sh -c`…), `>`, `tee`, `--privileged`, escrita em arquivos protegidos ou fora do workspace, `~/data`.
 - `defer`: baixo risco fora da whitelist — o harness decide pelo próprio modo de permissão.
 
-## 4. Graph Engineering (Proibição de Encadeamento Shell)
-- Comandos com `&&`, `||`, `;`, `&`, subshells `$()` ou backticks serão rejeitados imediatamente (`deny`) pelo guardrail.
-- **Paralelismo Leve**: Execute múltiplas chamadas atômicas de ferramentas no mesmo turno.
-- **Paralelismo Complexo**: Estruture tarefas como DAG Fan-Out com subagentes especializados independentes (nunca dois editando o mesmo arquivo) e consolidação Fan-In com validação (`.venv/bin/python -m unittest discover -s tests -v` e `.venv/bin/ctx doctor`).
+## 4. Comandos Atômicos (sem encadeamento shell)
+- Comandos com `&&`, `||`, `;`, `&`, subshells `$()` ou backticks são rejeitados (`deny`) pelo guardrail.
+- Execute um comando por chamada, para que cada um seja avaliado e auditado sozinho.
 
 ## 5. Ferramentas Nativas de Arquivo
 - Leia, edite e crie arquivos com as ferramentas do harness (Claude Code: `Read`/`Edit`/`Write`; Gemini CLI: `read_file`/`replace`/`write_file`; Codex: `apply_patch` para escrever), não com `cat`/`head`/`sed -n` nem `sed -i`/`>`/heredoc/`tee`.

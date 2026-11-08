@@ -284,7 +284,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     pl = prompt_sub.add_parser("list", help="Lista os prompts do catálogo")
     pl.add_argument("--source", default=DEFAULT_SOURCE, help=source_help)
     pa = prompt_sub.add_parser("add", help="Instala prompts em AGENTS.md/CLAUDE.md/GEMINI.md (idempotente)")
-    pa.add_argument("ids", nargs="+", help="IDs do catálogo (ex.: graph-engineering/dag-fanout-fanin)")
+    pa.add_argument("ids", nargs="+", help="IDs do catálogo (ex.: tooling/ferramentas-nativas-de-arquivo)")
     pa.add_argument("--source", default=DEFAULT_SOURCE, help=source_help)
     pa.add_argument("--file", action="append", help="Arquivo de instruções alvo (repetível; padrão: os existentes)")
     pa.add_argument("--force", action="store_true", help="Instala mesmo se o kit já cobrir o prompt")

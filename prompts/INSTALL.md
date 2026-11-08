@@ -8,7 +8,7 @@ Base fixada (substitua apenas se o usuário indicar outro tag):
 ## Passo 1 — Localizar o prompt
 
 1. Leia o catálogo: `<base>prompts/catalog.json`.
-2. Encontre a entrada cujo `id` é o pedido pelo usuário (ex.: `graph-engineering/dag-fanout-fanin`). Se não existir, liste os `id` disponíveis com o `summary` e pergunte qual instalar.
+2. Encontre a entrada cujo `id` é o pedido pelo usuário (ex.: `tooling/ferramentas-nativas-de-arquivo`). Se não existir, liste os `id` disponíveis com o `summary` e pergunte qual instalar.
 3. Leia o arquivo do prompt: `<base>` + campo `path` da entrada.
 
 ## Passo 2 — Extrair o snippet

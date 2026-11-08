@@ -37,11 +37,9 @@ Este repositório é gerenciado pelo **motor `ctx`** com governança multi-harne
 - `ask` (forte): `sudo`, instalação de pacotes, `systemctl start/stop/restart`, `git push`, wrappers (`env`, `xargs`, `sh -c`…), redirecionamento `>`, `tee`, `--privileged`, escrita em arquivos protegidos ou fora do workspace e qualquer acesso a `~/data`.
 - `defer`: baixo risco fora da whitelist (comandos/filtros não listados, leitura fora do workspace) — o Claude Code segue o próprio modo de permissão; o Antigravity pergunta (`force_ask`).
 
-### 4. Graph Engineering e Proibição de Encadeamento Shell
-- É **estritamente proibido** encadear comandos shell com `&&`, `||`, `;`, `&`, subshells `$()` ou backticks. Cada comando deve ser atômico.
-- Para tarefas paralelas:
-  - **Paralelismo Leve**: Emita múltiplas chamadas atômicas de ferramentas no mesmo turno.
-  - **Paralelismo Complexo**: Utilize subagentes especializados concorrentes (DAG Fan-Out) coordenados por um Agente Consolidador (Fan-In).
+### 4. Comandos Atômicos (sem encadeamento shell)
+- É **proibido** encadear comandos shell com `&&`, `||`, `;`, `&`, subshells `$()` ou backticks: o guardrail recusa (`deny`).
+- Execute **um comando por chamada**, para que cada um seja avaliado e auditado sozinho.
 
 ### 5. Política Container-First e Armazenamento Btrfs
 - **Container-First**: Para utilitários ou bancos de dados temporários (PostgreSQL, Redis, etc.), utilize containers efêmeros rootless (`podman run --rm` ou `docker run --rm`). NUNCA instale pacotes no host sem confirmação explícita.
