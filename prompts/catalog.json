@@ -57,22 +57,6 @@
       "path": "prompts/governance-and-guardrails/container-first-e-btrfs.md"
     },
     {
-      "id": "graph-engineering/dag-fanout-fanin",
-      "title": "Graph Engineering (DAG Fan-Out + Fan-In)",
-      "summary": "Proíbe encadeamento shell (&&, ;, &) e estrutura paralelismo em chamadas atômicas no mesmo turno ou DAG de subagentes.",
-      "category": "graph-engineering",
-      "harnesses": [
-        "Claude Code",
-        "Antigravity",
-        "Swarm",
-        "LangGraph",
-        "AutoGen"
-      ],
-      "covered_by_kit": false,
-      "requires": [],
-      "path": "prompts/graph-engineering/dag-fanout-fanin.md"
-    },
-    {
       "id": "toolchains-and-executors/enforcement-toolchains-canonicos",
       "title": "Toolchains Sandbox-Safe e Coaching One-Shot",
       "summary": "Python sempre do .venv (sem uv, python3 só cria o venv), Node via asdf, zero sondagem de binários e receitas One-Shot.",

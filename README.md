@@ -5,7 +5,7 @@ Pacotes e prompts prontos para aplicar em qualquer projeto que use agentes de IA
 <!-- CATALOG:START — gerado por `ctx prompt catalog`; não edite à mão -->
 ## 📚 Catálogo
 
-**1 pacote(s)** e **1 prompt(s) avulso(s)** · fonte: branch `main` · catálogo em JSON: [`prompts/catalog.json`](prompts/catalog.json)
+**1 pacote(s)** e **0 prompt(s) avulso(s)** · fonte: branch `main` · catálogo em JSON: [`prompts/catalog.json`](prompts/catalog.json)
 
 ### Pacotes
 
@@ -27,11 +27,7 @@ https://raw.githubusercontent.com/douglaspands/agent-harness-hub/main/prompts/IN
 O bloco do prompt é inserido em `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` entre marcadores; reinstalar atualiza só esse bloco.
 Com o pacote instalado, também dá para usar `.venv/bin/ctx prompt add <ID>`.
 
-#### `graph-engineering`
-
-| Prompt | ID para aplicar | O que faz | Harnesses | Requer |
-| :--- | :--- | :--- | :--- | :---: |
-| [**Graph Engineering (DAG Fan-Out + Fan-In)**](prompts/graph-engineering/dag-fanout-fanin.md) | `graph-engineering/dag-fanout-fanin` | Proíbe encadeamento shell (&&, ;, &) e estrutura paralelismo em chamadas atômicas no mesmo turno ou DAG de subagentes. | Claude Code, Antigravity, Swarm, LangGraph, AutoGen | — |
+_Nenhum prompt avulso ainda._
 <!-- CATALOG:END -->
 
 ---

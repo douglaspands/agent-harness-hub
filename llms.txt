@@ -14,7 +14,3 @@ Para instalar o pacote em um projeto, leia e siga apenas o INSTALL do pacote: el
 
 - [INSTALL de prompts](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/main/prompts/INSTALL.md): instala prompts avulsos do catálogo em AGENTS.md/CLAUDE.md/GEMINI.md.
 - [Catálogo](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/main/prompts/catalog.json): pacotes e prompts (JSON); prompts com `covered_by_kit: true` já fazem parte do pacote Autonomia e Segurança.
-
-## Optional
-
-- [Prompt: Graph Engineering](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/main/prompts/graph-engineering/dag-fanout-fanin.md)
