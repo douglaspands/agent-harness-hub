@@ -4,7 +4,7 @@
 
 [project]
 name = "agent-harness-hub"
-version = "0.2.0"
+version = "0.3.0"
 
 [ctx]
 # Como os agentes invocam o motor ctx neste projeto (usado nas instruções geradas em AGENTS.md/CLAUDE.md/GEMINI.md).

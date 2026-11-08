@@ -15,7 +15,7 @@ from typing import Sequence
 from ctx import WORKSPACE_ROOT, __version__
 from ctx.installer import init_project
 from ctx.metrics import analyze, transcripts_dir_for
-from ctx.prompts import DEFAULT_SOURCE, add_prompts, list_prompts, remove_prompts, write_catalog
+from ctx.prompts import DEFAULT_SOURCE, add_prompts, list_packages, list_prompts, remove_prompts, write_catalog
 from ctx.policy import doctor, resolve_binaries, sync_rules
 from ctx.rag import DEFAULT_PREVIEW_LINES, get_map, index_workspace, search_many, status
 
@@ -154,7 +154,7 @@ def cmd_rule(args: argparse.Namespace) -> int:
 def cmd_init(args: argparse.Namespace) -> int:
     target = Path(args.target) if args.target else Path.cwd()
     res = init_project(target, runner=args.runner, force=args.force, sync=not args.no_sync)
-    print(f"📦 Kit agent-harness-hub v{res['version']} em {res['target']} (runner: {res['runner']})\n")
+    print(f"📦 Pacote Autonomia e Segurança (agent-harness-hub v{res['version']}) em {res['target']} (runner: {res['runner']})\n")
     print(format_table([[a["status"], a["path"]] for a in res["actions"]], ["Ação", "Arquivo"]))
     if "sync" in res:
         print(f"\n✓ Sincronizado: {', '.join(res['sync']['synced_targets'])}")
@@ -169,9 +169,14 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_prompt(args: argparse.Namespace) -> int:
     if args.prompt_cmd == "list":
-        prompts = list_prompts(args.source)
-        rows = [[p["id"], "sim" if p["covered_by_kit"] else "não", p["summary"]] for p in prompts]
-        print(format_table(rows, ["ID", "No kit", "Resumo"]))
+        packages = list_packages(args.source)
+        if packages:
+            print("📦 Pacotes (instalam tudo de uma vez: siga o INSTALL.md do pacote ou rode `ctx init`)\n")
+            print(format_table([[p["id"], p["summary"]] for p in packages], ["ID", "Resumo"]))
+            print()
+        prompts = [p for p in list_prompts(args.source) if not p["covered_by_kit"]]
+        print("🧩 Prompts avulsos (`ctx prompt add <ID>`)\n")
+        print(format_table([[p["id"], p["summary"]] for p in prompts], ["ID", "Resumo"]))
         return 0
     if args.prompt_cmd == "catalog":
         path = write_catalog(WORKSPACE_ROOT)
@@ -270,7 +275,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_rule.set_defaults(func=cmd_rule)
 
     # init
-    p_init = subparsers.add_parser("init", help="Instala/atualiza o kit (guardrail, policy, skills, hooks) no projeto atual")
+    p_init = subparsers.add_parser("init", help="Instala/atualiza o pacote Autonomia e Segurança (guardrail, policy, skills, hooks) no projeto atual")
     p_init.add_argument("--target", default=None, help="Diretório do projeto (padrão: diretório atual)")
     p_init.add_argument("--runner", default=None, help="Como os agentes invocam o ctx (padrão: .venv/bin/ctx se houver pyproject.toml, senão ctx)")
     p_init.add_argument("--force", action="store_true", help="Sobrescreve policy.toml e skills existentes")
@@ -280,7 +285,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # prompt
     p_prompt = subparsers.add_parser("prompt", help="Lista, instala e remove prompts individuais do hub")
     prompt_sub = p_prompt.add_subparsers(dest="prompt_cmd", required=True)
-    source_help = f"URL https com tag ou diretório local do hub (padrão: {DEFAULT_SOURCE})"
+    source_help = f"URL https do hub ou diretório local (padrão: branch main, {DEFAULT_SOURCE})"
     pl = prompt_sub.add_parser("list", help="Lista os prompts do catálogo")
     pl.add_argument("--source", default=DEFAULT_SOURCE, help=source_help)
     pa = prompt_sub.add_parser("add", help="Instala prompts em AGENTS.md/CLAUDE.md/GEMINI.md (idempotente)")

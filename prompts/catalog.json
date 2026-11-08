@@ -1,5 +1,27 @@
 {
-  "version": "0.2.0",
+  "version": "0.3.0",
+  "packages": [
+    {
+      "id": "autonomia-e-seguranca",
+      "title": "Autonomia e Segurança",
+      "summary": "Mais autonomia ao agente sem abrir mão da segurança — guardrail com bloqueio real, menos prompts de permissão, Python sempre do .venv, descoberta One-Shot, ferramentas nativas de arquivo e Container-First.",
+      "harnesses": [
+        "Claude Code",
+        "Codex",
+        "Cursor",
+        "Gemini CLI",
+        "Antigravity"
+      ],
+      "path": "pacotes/autonomia-e-seguranca/INSTALL.md",
+      "guide": "pacotes/autonomia-e-seguranca/GUIA.md",
+      "includes": [
+        "discovery/descoberta-em-1-turno",
+        "governance-and-guardrails/container-first-e-btrfs",
+        "toolchains-and-executors/enforcement-toolchains-canonicos",
+        "tooling/ferramentas-nativas-de-arquivo"
+      ]
+    }
+  ],
   "prompts": [
     {
       "id": "discovery/descoberta-em-1-turno",
@@ -33,22 +55,6 @@
       "covered_by_kit": true,
       "requires": [],
       "path": "prompts/governance-and-guardrails/container-first-e-btrfs.md"
-    },
-    {
-      "id": "graph-engineering/dag-fanout-fanin",
-      "title": "Graph Engineering (DAG Fan-Out + Fan-In)",
-      "summary": "Proíbe encadeamento shell (&&, ;, &) e estrutura paralelismo em chamadas atômicas no mesmo turno ou DAG de subagentes.",
-      "category": "graph-engineering",
-      "harnesses": [
-        "Claude Code",
-        "Antigravity",
-        "Swarm",
-        "LangGraph",
-        "AutoGen"
-      ],
-      "covered_by_kit": false,
-      "requires": [],
-      "path": "prompts/graph-engineering/dag-fanout-fanin.md"
     },
     {
       "id": "toolchains-and-executors/enforcement-toolchains-canonicos",

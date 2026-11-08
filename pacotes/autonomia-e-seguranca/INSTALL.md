@@ -1,9 +1,20 @@
-# BOOTSTRAP — Instalar o kit agent-harness-hub v0.2.0 neste projeto
+---
+title: Autonomia e Segurança
+summary: Mais autonomia ao agente sem abrir mão da segurança — guardrail com bloqueio real, menos prompts de permissão, Python sempre do .venv, descoberta One-Shot, ferramentas nativas de arquivo e Container-First.
+harnesses: [Claude Code, Codex, Cursor, Gemini CLI, Antigravity]
+---
 
-> **Para o agente de IA que está lendo isto (qualquer vendor):** siga os passos em ordem, um comando atômico por chamada (sem `&&`, `;` ou `|` para outro shell). O código vem do pacote versionado `v0.2.0`; **não** reescreva arquivos a partir deste texto nem de outra página.
-> Referência completa (racional, diagramas, matriz de decisão): `guides/guia-replicacao-rag-e-seguranca.md` no mesmo tag.
+# Instalar o pacote Autonomia e Segurança (agent-harness-hub) neste projeto
 
-O kit instala no projeto: guardrail `PreToolUse` (`scripts/guardrail.py`), política declarativa (`policy.toml`), skill `workspace-ctx`, instruções de Turno 0 (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`) e o motor local `ctx` (busca FTS5, mapa, status).
+> **Para o agente de IA que está lendo isto (qualquer vendor):** siga os passos em ordem, um comando atômico por chamada (sem `&&`, `;` ou `|` para outro shell). O código vem da branch `main` do repositório (a fonte da verdade), instalado pelo `ctx init`; **não** reescreva arquivos a partir deste texto nem de outra página.
+> Referência completa (racional, diagramas, matriz de decisão): `pacotes/autonomia-e-seguranca/GUIA.md` na mesma branch.
+
+O pacote **Autonomia e Segurança** instala tudo de uma vez no projeto:
+
+- guardrail de pré-execução (`scripts/guardrail.py`) com hook para Claude Code, Codex, Cursor, Gemini CLI e Antigravity;
+- política declarativa (`policy.toml`) e o launcher `scripts/venv-python` (Python sempre do `.venv`);
+- skill `workspace-ctx` e as instruções de Turno 0 (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`): descoberta One-Shot, toolchains Sandbox-Safe, comandos atômicos, ferramentas nativas de arquivo e Container-First/Btrfs;
+- o motor local `ctx` (busca FTS5, mapa, status, métricas).
 
 ## Regras durante a instalação
 
@@ -17,7 +28,7 @@ Rode em chamadas paralelas e anote o resultado:
 
 1. `git rev-parse --show-toplevel` — raiz do projeto (rode os passos seguintes nela).
 2. `uv --version` — define a variante do Passo 1 (falha = sem uv).
-3. `ls -a` na raiz — existe `pyproject.toml`? `policy.toml` (kit já instalado → vá a "Atualizar")? `.venv/`? Quais harnesses aparecem (`.claude/`, `CLAUDE.md`, `.codex/`, `.cursor/`, `.gemini/`, `GEMINI.md`, `.agents/`, `AGENTS.md`, `.github/copilot-instructions.md`)? Pergunte ao usuário quais harnesses o time usa.
+3. `ls -a` na raiz — existe `pyproject.toml`? `policy.toml` (pacote já instalado → vá a "Atualizar")? `.venv/`? Quais harnesses aparecem (`.claude/`, `CLAUDE.md`, `.codex/`, `.cursor/`, `.gemini/`, `GEMINI.md`, `.agents/`, `AGENTS.md`, `.github/copilot-instructions.md`)? Pergunte ao usuário quais harnesses o time usa.
 
 ## Passo 1 — Instalar o motor no `.venv` do projeto (nunca no Python global)
 
@@ -25,13 +36,13 @@ Escolha **uma** variante:
 
 | Situação | Comandos (um por chamada) |
 | :--- | :--- |
-| Tem `uv` **e** `pyproject.toml` (pergunte antes: altera dependências) | `uv add --dev "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@v0.2.0"` |
-| Tem `uv`, sem `pyproject.toml` | `uv venv .venv` → `uv pip install --python .venv/bin/python "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@v0.2.0"` |
-| **Sem `uv`** | `python3 -m venv .venv` (única exceção ao Python global) → `.venv/bin/python -m pip install "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@v0.2.0"` |
+| Tem `uv` **e** `pyproject.toml` (pergunte antes: altera dependências) | `uv add --dev "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@main"` |
+| Tem `uv`, sem `pyproject.toml` | `uv venv .venv` → `uv pip install --python .venv/bin/python "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@main"` |
+| **Sem `uv`** | `python3 -m venv .venv` (única exceção ao Python global) → `.venv/bin/python -m pip install "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@main"` |
 
-Resultado esperado: `.venv/bin/ctx --version` imprime `ctx (agent-harness-hub) 0.2.0`.
+Resultado esperado: `.venv/bin/ctx --version` imprime `ctx (agent-harness-hub) <versão>` (a versão da `main` no momento da instalação).
 
-## Passo 2 — Instalar o kit
+## Passo 2 — Instalar o pacote
 
 `.venv/bin/ctx init`
 
@@ -70,5 +81,5 @@ Sugira (não execute sem pedido) commitar: `policy.toml`, `scripts/`, `.claude/`
 
 ## Atualizar / remover
 
-- **Atualizar:** troque o tag no comando do Passo 1 (ex.: `@v0.3.0`), reinstale e rode `.venv/bin/ctx init`. `scripts/guardrail.py` e `scripts/venv-python` são atualizados; `policy.toml` e skills são mantidos (compare com o template do novo tag antes de usar `--force`).
+- **Atualizar** (traz o que está na `main` agora): com `uv` e `pyproject.toml`, `uv lock --upgrade-package agent-harness-hub` → `uv sync`; com `uv` sem `pyproject.toml`, repita o `uv pip install` do Passo 1 com `--reinstall`; sem `uv`, `.venv/bin/python -m pip install --upgrade --force-reinstall "agent-harness-hub @ git+https://github.com/douglaspands/agent-harness-hub@main"`. Depois rode `.venv/bin/ctx init`: `scripts/guardrail.py` e `scripts/venv-python` são atualizados; `policy.toml` e skills são mantidos (compare com `templates/policy.toml.example` da `main` antes de usar `--force`).
 - **Remover:** apague `scripts/guardrail.py`, `scripts/venv-python`, `policy.toml`, `.ctx/`, as skills `workspace-ctx`, as entradas do guardrail em `.claude/settings.json`, `.codex/hooks.json`, `.cursor/hooks.json`, `.gemini/settings.json` e `.agents/hooks.json`, e o bloco entre `<!-- AUTOGENERATED_BY_CTX_START -->` e `<!-- AUTOGENERATED_BY_CTX_END -->` dos `.md`; depois remova a dependência `agent-harness-hub`.
