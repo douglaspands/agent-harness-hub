@@ -1,0 +1,28 @@
+---
+title: Título curto do prompt
+summary: Uma frase dizendo o que o prompt muda no comportamento do agente.
+harnesses: [Claude Code, Antigravity, Codex, Cursor]
+covered_by_kit: false
+requires: []
+---
+
+# Prompt: Título Completo
+
+## Objetivo
+Qual problema operacional dos agentes este prompt resolve.
+
+## Harnesses Compatíveis
+- Claude Code
+- Google Antigravity (AGY)
+- Codex / Cursor / outros que leem AGENTS.md
+
+## Snippet de Prompt / Instrução de Sistema
+
+```markdown
+### Título da Regra
+- Instrução imperativa e verificável 1.
+- Instrução imperativa e verificável 2.
+```
+
+## Significado e Impacto
+- **Benefício**: efeito observado ou esperado.

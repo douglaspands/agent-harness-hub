@@ -1,3 +1,10 @@
+---
+title: Container-First e Btrfs No-COW
+summary: Serviços e utilitários em containers efêmeros rootless; nada instalado no host sem confirmação; pergunta antes de usar ~/data (No-COW).
+harnesses: [Claude Code, Antigravity, Codex, Cursor]
+covered_by_kit: true
+---
+
 # Prompt: Política Container-First e Armazenamento Btrfs No-COW
 
 ## Objetivo

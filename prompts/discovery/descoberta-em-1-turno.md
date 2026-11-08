@@ -1,7 +1,15 @@
-# Prompt: Descoberta Cirúrgica em 1 Turno (Anti-Exploração Cega)
+---
+title: Descoberta One-Shot em 1 Turno
+summary: Troca varreduras cegas (ls -R, find, grep -r) por ctx status/map/search com preview de 25 linhas no Turno 1.
+harnesses: [Claude Code, Antigravity, Codex, Cursor, Aider]
+covered_by_kit: true
+requires: [kit]
+---
+
+# Prompt: Descoberta One-Shot em 1 Turno (Anti-Exploração Cega)
 
 ## Objetivo
-Evitar que agentes de IA desperdicem entre 4 e 8 turnos rodando `ls`, `find`, `grep` ou lendo arquivos inteiros na tentativa de descobrir a estrutura do projeto.
+Evitar que agentes de IA desperdicem entre 4 e 8 turnos rodando `ls`, `find`, `grep` ou lendo arquivos inteiros na tentativa de descobrir a estrutura e o estado do projeto, e eliminar re-execuções para "ler o resto" de uma função ou adicionar flags esquecidas.
 
 ## Harnesses Compatíveis
 - Google Antigravity (AGY / Antigravity IDE)
@@ -12,15 +20,17 @@ Evitar que agentes de IA desperdicem entre 4 e 8 turnos rodando `ls`, `find`, `g
 ## Snippet de Prompt / Instrução de Sistema
 
 ```markdown
-### Diretriz de Descoberta Cirúrgica e Economia de Contexto
-- NUNCA execute varreduras cegas de diretórios (`ls -R`, `find .`, `tree`) nem leia arquivos inteiros para localizar código ou documentação.
-- No Turno 1, utilize prioritariamente o motor de busca local e o mapa estrutural:
-  1. Para visão da arquitetura e das seções do repositório: execute `uv run ctx map` (ou ferramenta equivalente de mapa).
-  2. Para localizar implementações, classes, funções ou regras específicas: execute `uv run ctx search "<termo>" --top 5`.
-- Utilize o retorno `arquivo:inicio-fim` para realizar leituras cirúrgicas estritamente nas linhas necessárias (`read_file` com intervalo de linhas), consumindo apenas 150 a 400 tokens por busca.
+### Diretriz de Descoberta One-Shot e Economia de Contexto
+- NUNCA execute varreduras cegas (`ls -R`, `find .`, `tree` sem `-L`, `grep -r`) nem leia arquivos inteiros para localizar código ou documentação.
+- No Turno 1, use o motor local (`.venv/bin/ctx` ou `uv run ctx`), em chamadas paralelas no mesmo turno:
+  1. Estado consolidado (Git + changes OpenSpec com progresso X/Y + saúde do índice): `.venv/bin/ctx status`.
+  2. Mapa estrutural do código ativo (sem `openspec/changes/archive/`): `.venv/bin/ctx map [subcaminhos...]`.
+  3. Vários conceitos de uma vez, com 25 linhas de preview: `.venv/bin/ctx search "<q1>" "<q2>" --lines 25 [--path src]`.
+- Use o retorno `arquivo:inicio-fim` para leituras cirúrgicas só quando o preview não bastar.
+- Fora do `ctx`, use as Receitas One-Shot: `rg -n --heading -C 2 "<padrao>" [caminho]`, `fd --max-depth 3 --exclude archive "<padrao>"`, `tree -L 2 --dirsfirst`, `git log --oneline --decorate -n 10`.
 ```
 
 ## Significado e Impacto
-- **Redução de Latência**: Localização exata da linha em < 10ms.
-- **Economia de Tokens**: Substitui dumps de 3.000 a 15.000 tokens por recortes de 150 a 400 tokens.
-- **Eliminação de Alucinação**: O modelo foca apenas no bloco relevante de código ou especificação.
+- **Redução de Turnos**: Estado do Git + tasks + localização exata de múltiplos conceitos em 1 a 3 chamadas paralelas (< 15ms cada).
+- **Economia de Tokens**: Substitui dumps de 3.000 a 15.000 tokens por recortes de 25 linhas focados.
+- **Zero Re-execução**: O preview de 25 linhas e as Receitas One-Shot eliminam a 2ª chamada para "ler o resto" ou adicionar flags.

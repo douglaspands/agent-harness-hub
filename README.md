@@ -1,107 +1,119 @@
 # Agent Harness Hub 🎯
 
-Repositório central de **boas práticas, arquiteturas, diretrizes de governança e prompts de alta eficiência** para uso em **Agent Harnesses** modernos (Google Antigravity, Claude Code, Aider, Swarm e frameworks afins).
+Catálogo de **prompts e diretrizes prontos para aplicar** em qualquer projeto que use agentes de IA (Claude Code, Google Antigravity, Codex, Cursor, Aider e afins), para dar **mais autonomia com segurança**: menos turnos desperdiçados, menos prompts de permissão desnecessários e bloqueio do que é perigoso.
 
-O objetivo deste hub é catalogar soluções testadas que eliminam desperdício de tokens, previnem alucinações operacionais, garantem autonomia segura e elevam a precisão dos agentes de IA desde o **Turno 0 e Turno 1**.
+Cada prompt é aplicado por **ID** com uma frase no chat do seu agente. Veja abaixo como aplicar e o catálogo completo.
+
+<!-- APPLY:START — gerado por `ctx prompt catalog`; não edite à mão -->
+## 🚀 Como Aplicar um Prompt
+
+1. Escolha o **ID** de um ou mais prompts no [catálogo](#-catálogo-de-prompts).
+2. Na pasta do projeto de destino, peça ao seu agente (Claude Code, Antigravity, Codex, Cursor…):
+
+   ```text
+   Instale o prompt <ID> do agent-harness-hub seguindo
+   https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.2.0/prompts/INSTALL.md
+   ```
+
+   Para vários prompts, liste os IDs separados por espaço.
+3. Reinicie a sessão do agente para ele carregar as instruções novas.
+
+Pelo terminal, em projetos com o kit: `.venv/bin/ctx prompt add <ID> [<ID> ...]` (listar: `ctx prompt list`; remover: `ctx prompt remove <ID>`).
+
+**O que acontece:** só o bloco de snippet do prompt é inserido em `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` (os que existirem; senão é criado o `AGENTS.md`, lido por Codex, Cursor, Copilot e outros), entre marcadores `<!-- agent-harness-hub:prompt <ID> ... -->`. Reinstalar atualiza o bloco; nada fora dele é alterado.
+
+**Por que a URL tem tag (`v0.2.0`) e não `main`:** o conteúdo fica imutável e auditável; um commit futuro na `main` não muda o que o seu agente obedece.
+
+### Kit completo (bloqueio real, não só instruções)
+
+Além dos prompts, o hub tem um kit com guardrail de pré-execução (bloqueio real no Claude Code, Codex, Cursor e Gemini CLI), `policy.toml`, motor de busca local `ctx` e skills. Ele já inclui os prompts marcados com ✅ na coluna **Kit**, e é pré-requisito dos prompts com `kit` na coluna **Requer**:
+
+```text
+Leia https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.2.0/BOOTSTRAP.md e siga as instruções
+para instalar o kit agent-harness-hub neste projeto. Respeite as regras de confirmação do documento e
+me pergunte antes de alterar dependências ou qualquer coisa fora do projeto.
+```
+<!-- APPLY:END -->
+
+<!-- CATALOG:START — gerado por `ctx prompt catalog`; não edite à mão -->
+## 📚 Catálogo de Prompts
+
+**5 prompts** · versão `v0.2.0` · catálogo em JSON: [`prompts/catalog.json`](prompts/catalog.json)
+
+### `discovery`
+
+| Prompt | ID para aplicar | O que faz | Harnesses | Requer | Kit |
+| :--- | :--- | :--- | :--- | :---: | :---: |
+| [**Descoberta One-Shot em 1 Turno**](prompts/discovery/descoberta-em-1-turno.md) | `discovery/descoberta-em-1-turno` | Troca varreduras cegas (ls -R, find, grep -r) por ctx status/map/search com preview de 25 linhas no Turno 1. | Claude Code, Antigravity, Codex, Cursor, Aider | kit | ✅ |
+
+### `governance-and-guardrails`
+
+| Prompt | ID para aplicar | O que faz | Harnesses | Requer | Kit |
+| :--- | :--- | :--- | :--- | :---: | :---: |
+| [**Container-First e Btrfs No-COW**](prompts/governance-and-guardrails/container-first-e-btrfs.md) | `governance-and-guardrails/container-first-e-btrfs` | Serviços e utilitários em containers efêmeros rootless; nada instalado no host sem confirmação; pergunta antes de usar ~/data (No-COW). | Claude Code, Antigravity, Codex, Cursor | — | ✅ |
+
+### `graph-engineering`
+
+| Prompt | ID para aplicar | O que faz | Harnesses | Requer | Kit |
+| :--- | :--- | :--- | :--- | :---: | :---: |
+| [**Graph Engineering (DAG Fan-Out + Fan-In)**](prompts/graph-engineering/dag-fanout-fanin.md) | `graph-engineering/dag-fanout-fanin` | Proíbe encadeamento shell (&&, ;, &) e estrutura paralelismo em chamadas atômicas no mesmo turno ou DAG de subagentes. | Claude Code, Antigravity, Swarm, LangGraph, AutoGen | — | ✅ |
+
+### `toolchains-and-executors`
+
+| Prompt | ID para aplicar | O que faz | Harnesses | Requer | Kit |
+| :--- | :--- | :--- | :--- | :---: | :---: |
+| [**Toolchains Sandbox-Safe e Coaching One-Shot**](prompts/toolchains-and-executors/enforcement-toolchains-canonicos.md) | `toolchains-and-executors/enforcement-toolchains-canonicos` | Python sempre do .venv (sem uv, python3 só cria o venv), Node via asdf, zero sondagem de binários e receitas One-Shot. | Claude Code, Antigravity, Codex, Cursor | kit | ✅ |
+
+### `tooling`
+
+| Prompt | ID para aplicar | O que faz | Harnesses | Requer | Kit |
+| :--- | :--- | :--- | :--- | :---: | :---: |
+| [**Ferramentas Nativas de Arquivo**](prompts/tooling/ferramentas-nativas-de-arquivo.md) | `tooling/ferramentas-nativas-de-arquivo` | Faz o agente ler, editar e criar arquivos com as ferramentas do harness em vez de cat/head/sed -i/heredoc/redirecionamento no shell. | Claude Code, Antigravity, Codex, Cursor | — | ✅ |
+<!-- CATALOG:END -->
 
 ---
 
-## 📁 Estrutura do Repositório
+## 📖 Guias
 
-O repositório foi organizado de forma modular para permitir a adição contínua de novos prompts, diretrizes e guias técnicos:
+| Guia | Para quê |
+| :--- | :--- |
+| [RAG Local One-Shot (`ctx`), Toolchains Sandbox-Safe e Segurança](guides/guia-replicacao-rag-e-seguranca.md) | Referência conceitual do kit: arquitetura, racional de cada ferramenta, fluxo decisório do guardrail (`allow`/`ask`/`deny`/`defer`) e diagramas. Para instalar, use o [`BOOTSTRAP.md`](BOOTSTRAP.md). |
+
+---
+
+## ✍️ Como Adicionar um Prompt ao Catálogo
+
+1. Copie [`templates/prompt.md.example`](templates/prompt.md.example) para `prompts/<categoria>/<nome>.md`. O ID será `<categoria>/<nome>`; uma pasta nova vira uma categoria nova no catálogo.
+2. Preencha o frontmatter:
+   - `title`: nome curto exibido no catálogo;
+   - `summary`: uma frase sobre o que o prompt muda no agente;
+   - `harnesses`: lista de harnesses testados;
+   - `covered_by_kit`: `true` só se o kit já gerar essas instruções.
+3. Escreva a instrução **dentro do bloco** ```` ```markdown ```` da seção `## Snippet de Prompt / Instrução de Sistema`. Só esse bloco é instalado nos projetos; o resto do arquivo é documentação.
+4. Atualize o catálogo e este README: `uv run ctx prompt catalog`.
+5. Valide: `uv run python -m unittest discover -s tests`. Os testes falham se algum prompt estiver sem frontmatter ou snippet, se o catálogo/README estiver desatualizado ou se algum documento citar outra versão.
+6. Para publicar: suba a versão em `pyproject.toml` e `src/ctx/__init__.py`, rode o passo 4 de novo, ajuste o tag em `BOOTSTRAP.md`, `prompts/INSTALL.md` e `llms.txt`, faça o commit e crie o tag (ex.: `v0.3.0`).
+
+<details>
+<summary>📁 Estrutura do repositório</summary>
 
 ```text
 agent-harness-hub/
-├── README.md                                    # Índice mestre, objetivos e catálogo de recursos
-├── AGENTS.md / CLAUDE.md / GEMINI.md            # Instruções de contexto geradas pelo ctx (Turno 0)
-├── policy.toml                                  # Fonte única declarativa de governança multi-harness
-├── pyproject.toml                               # Configuração do projeto e entry point 'ctx'
-├── bin/
-│   └── ctx                                      # Wrapper executável portátil para a CLI ctx
-├── scripts/
-│   └── guardrail.py                             # Hook universal PreToolUse (< 5ms, stdlib pura)
-├── src/
-│   └── ctx/                                     # Motor de aceleração, RAG local e governança
-│       ├── __init__.py                          # Descoberta dinâmica da raiz do repositório
-│       ├── cli.py                               # CLI: index, search, map, bins, rule, doctor
-│       ├── rag.py                               # SQLite FTS5/BM25 + Chunker AST Python/Markdown
-│       └── policy.py                            # Sincronizador multi-harness + cache bins.json
-├── tests/                                       # Suíte de testes unitários (RAG, guardrail, policy)
-├── .agents/                                     # Configurações para Google Antigravity
-│   ├── hooks.json                               # Hook PreToolUse apontando para guardrail.py
-│   └── skills/workspace-ctx/SKILL.md            # Skill de aceleração para Antigravity
-├── .claude/                                     # Configurações para Claude Code
-│   ├── settings.json                            # Hook PreToolUse apontando para guardrail.py
-│   └── skills/workspace-ctx/SKILL.md            # Skill de aceleração para Claude Code
-├── guides/                                      # Guias arquiteturais aprofundados e manuais de replicação
-│   └── guia-replicacao-rag-e-seguranca.md       # RAG local (ctx), Cache de Binários, Toolchains e Segurança
-├── prompts/                                     # Snippets e instruções prontas para copiar e usar
-│   ├── discovery/                               # Busca cirúrgica, redução de contexto e exploração rápida
-│   │   └── descoberta-em-1-turno.md
-│   ├── toolchains-and-executors/                # Resolução de executores (uv, asdf) e cache de binários
-│   │   └── enforcement-toolchains-canonicos.md
-│   ├── graph-engineering/                       # DAGs de subagentes, Fan-Out paralelo e consolidação Fan-In
-│   │   └── dag-fanout-fanin.md
-│   └── governance-and-guardrails/               # Políticas de segurança, containers efêmeros e Btrfs No-COW
-│       └── container-first-e-btrfs.md
-└── templates/                                   # Modelos e arquivos declarativos prontos para replicação
-    └── policy.toml.example                      # Matriz de governança multi-harness (allow, ask, deny, toolchains)
+├── README.md                    # Catálogo (seções geradas por `ctx prompt catalog`)
+├── prompts/
+│   ├── <categoria>/<nome>.md    # Prompts (frontmatter + snippet)
+│   ├── catalog.json             # Catálogo gerado
+│   └── INSTALL.md               # Instruções para o agente instalar prompts
+├── BOOTSTRAP.md                 # Instruções para o agente instalar o kit completo
+├── llms.txt                     # Índice para LLMs (llmstxt.org)
+├── guides/                      # Guias arquiteturais
+├── templates/                   # prompt.md.example e policy.toml.example
+├── src/ctx/                     # Motor ctx: init, prompt, status, search, map, bins, rule, doctor
+│   └── kit/                     # Arquivos instalados pelo `ctx init`
+├── scripts/                     # guardrail.py (hook PreToolUse) e venv-python (Python sempre do .venv)
+├── tests/                       # Testes do motor, do kit e do catálogo
+├── policy.toml                  # Política deste repositório
+└── AGENTS.md / CLAUDE.md / GEMINI.md, .claude/, .agents/   # Gerados pelo kit para este repositório
 ```
 
----
-
-## 📚 Catálogo de Recursos, Dicas e Prompts
-
-Abaixo está a lista de materiais disponíveis no hub com seus respectivos significados, problemas resolvidos e compatibilidade:
-
-### 1. Guias Arquiteturais e de Replicação (`guides/`)
-
-| Guia | Harnesses | Foco Principal | Significado e O que Resolve |
-| :--- | :--- | :--- | :--- |
-| [**Guia de Replicação: RAG Local Ultra-Performático (`ctx`), Cache de Binários e Segurança**](guides/guia-replicacao-rag-e-seguranca.md) | Antigravity, Claude Code, CLI | Arquitetura Completa de Autonomia | Manual agnóstico e completo de replicação do motor `ctx` (SQLite FTS5/BM25 + AST chunker + `policy.toml` + Guardrail universal). Elimina a exploração cega de arquivos, sondagem repetitiva de binários (`which`), uso de executores errados e encadeamentos frágeis no terminal em menos de 2 minutos de bootstrap. |
-
----
-
-### 2. Prompts e Diretrizes Prontas (`prompts/`)
-
-| Prompt / Diretriz | Categoria | Harnesses | Significado e Benefício Técnico |
-| :--- | :--- | :--- | :--- |
-| [**Descoberta Cirúrgica em 1 Turno**](prompts/discovery/descoberta-em-1-turno.md) | `discovery` | Antigravity, Claude Code, Aider | **Elimina varreduras cegas de diretórios**: Instrui o agente a consultar o índice local (`ctx map` e `ctx search`) no Turno 1 em `< 10ms`, lendo fatias de 150 a 400 tokens em vez de despender 4 a 8 turnos lendo arquivos inteiros. |
-| [**Enforcement de Toolchains Canônicos**](prompts/toolchains-and-executors/enforcement-toolchains-canonicos.md) | `toolchains` | Antigravity, Claude Code | **Acerto de runtime na 1ª tentativa (1-shot)**: Bloqueia atalhos errados (chamar `python3` global ou `/usr/bin/node`) e impede sondagens de binários (`which`/`whereis`), forçando os executores canônicos (`uv run`, `asdf exec`). |
-| [**Graph Engineering (DAG Fan-Out/Fan-In)**](prompts/graph-engineering/dag-fanout-fanin.md) | `workflows` | Antigravity, Claude Code, Swarm | **Paralelismo estruturado e seguro**: Proíbe operadores de encadeamento opacos no shell (`&&`, `||`, `;`, `&`) e modela o fluxo de trabalho em nós DAG independentes com um agente consolidador final. |
-| [**Container-First e Btrfs No-COW**](prompts/governance-and-guardrails/container-first-e-btrfs.md) | `governance` | Antigravity, Claude Code, Linux | **Proteção do sistema host e disco**: Prioriza execução de serviços auxiliares via containers efêmeros rootless (`podman`/`docker`) e preserva a integridade de SSDs em sistemas Linux Btrfs sugerindo `~/data` (`chattr +C` / No-COW). |
-
----
-
-### 3. Modelos Declarativos (`templates/`)
-
-| Arquivo | Descrição |
-| :--- | :--- |
-| [**`policy.toml.example`**](templates/policy.toml.example) | Modelo declarativo de governança unificada. Define listas de comandos (`allow`, `ask`, `deny`), filtros de pipes seguros, proteção de arquivos sensíveis, toolchains canônicos e regras de containers. |
-
----
-
-## 🚀 Como Aplicar em um Novo Projeto
-
-1. **Adicionar ao Prompt de Sistema ou Arquivo de Instruções**:
-   - Incorpore os snippets de [`prompts/`](prompts/) no arquivo de contexto do seu agente (ex: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` ou `.cursorrules`).
-2. **Replicar a Arquitetura Completa**:
-   - Siga o passo a passo descrito no [Guia de Replicação](guides/guia-replicacao-rag-e-seguranca.md) para habilitar o RAG SQLite FTS5 local, o hook universal de guardrail e a sincronização multi-harness.
-3. **Customizar a Política Declarativa**:
-   - Utilize [`templates/policy.toml.example`](templates/policy.toml.example) como base para personalizar os comandos permitidos e toolchains do repositório.
-
----
-
-## ✍️ Como Adicionar Novos Prompts e Dicas
-
-Ao adicionar novos itens ao repositório:
-1. **Escolha a pasta correta**:
-   - `guides/`: Para arquiteturas de ponta a ponta, manuais e documentações conceituais.
-   - `prompts/<categoria>/`: Para prompts focados, regras sistêmicas ou personas.
-   - `templates/`: Para arquivos de configuração e boilerplates.
-2. **Estruture o arquivo Markdown com**:
-   - **Título e Objetivo Claro**
-   - **Harnesses Compatíveis**
-   - **Snippet de Prompt / Instrução Pronta para Uso**
-   - **Significado Técnico e Impacto Observado**
-3. **Atualize o índice deste `README.md`** adicionando o novo item à tabela correspondente.
+</details>

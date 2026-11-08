@@ -1,0 +1,86 @@
+{
+  "version": "0.2.0",
+  "prompts": [
+    {
+      "id": "discovery/descoberta-em-1-turno",
+      "title": "Descoberta One-Shot em 1 Turno",
+      "summary": "Troca varreduras cegas (ls -R, find, grep -r) por ctx status/map/search com preview de 25 linhas no Turno 1.",
+      "category": "discovery",
+      "harnesses": [
+        "Claude Code",
+        "Antigravity",
+        "Codex",
+        "Cursor",
+        "Aider"
+      ],
+      "covered_by_kit": true,
+      "requires": [
+        "kit"
+      ],
+      "path": "prompts/discovery/descoberta-em-1-turno.md"
+    },
+    {
+      "id": "governance-and-guardrails/container-first-e-btrfs",
+      "title": "Container-First e Btrfs No-COW",
+      "summary": "Serviços e utilitários em containers efêmeros rootless; nada instalado no host sem confirmação; pergunta antes de usar ~/data (No-COW).",
+      "category": "governance-and-guardrails",
+      "harnesses": [
+        "Claude Code",
+        "Antigravity",
+        "Codex",
+        "Cursor"
+      ],
+      "covered_by_kit": true,
+      "requires": [],
+      "path": "prompts/governance-and-guardrails/container-first-e-btrfs.md"
+    },
+    {
+      "id": "graph-engineering/dag-fanout-fanin",
+      "title": "Graph Engineering (DAG Fan-Out + Fan-In)",
+      "summary": "Proíbe encadeamento shell (&&, ;, &) e estrutura paralelismo em chamadas atômicas no mesmo turno ou DAG de subagentes.",
+      "category": "graph-engineering",
+      "harnesses": [
+        "Claude Code",
+        "Antigravity",
+        "Swarm",
+        "LangGraph",
+        "AutoGen"
+      ],
+      "covered_by_kit": true,
+      "requires": [],
+      "path": "prompts/graph-engineering/dag-fanout-fanin.md"
+    },
+    {
+      "id": "toolchains-and-executors/enforcement-toolchains-canonicos",
+      "title": "Toolchains Sandbox-Safe e Coaching One-Shot",
+      "summary": "Python sempre do .venv (sem uv, python3 só cria o venv), Node via asdf, zero sondagem de binários e receitas One-Shot.",
+      "category": "toolchains-and-executors",
+      "harnesses": [
+        "Claude Code",
+        "Antigravity",
+        "Codex",
+        "Cursor"
+      ],
+      "covered_by_kit": true,
+      "requires": [
+        "kit"
+      ],
+      "path": "prompts/toolchains-and-executors/enforcement-toolchains-canonicos.md"
+    },
+    {
+      "id": "tooling/ferramentas-nativas-de-arquivo",
+      "title": "Ferramentas Nativas de Arquivo",
+      "summary": "Faz o agente ler, editar e criar arquivos com as ferramentas do harness em vez de cat/head/sed -i/heredoc/redirecionamento no shell.",
+      "category": "tooling",
+      "harnesses": [
+        "Claude Code",
+        "Antigravity",
+        "Codex",
+        "Cursor"
+      ],
+      "covered_by_kit": true,
+      "requires": [],
+      "path": "prompts/tooling/ferramentas-nativas-de-arquivo.md"
+    }
+  ]
+}

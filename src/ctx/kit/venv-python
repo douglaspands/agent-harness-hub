@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Executa Python SEMPRE a partir do .venv do workspace — nunca o python global da máquina.
+#
+# Se .venv/bin/python não existir, cria o .venv uma única vez:
+#   1. com `uv venv` quando o uv estiver disponível;
+#   2. senão, com o Python da máquina (`python3 -m venv`), usado APENAS para criar o .venv.
+# Depois executa: .venv/bin/python "$@"
+#
+# Usado pelo hook do guardrail e pelo wrapper bin/ctx. Seguro para chamadas concorrentes (lock em .ctx/).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV_DIR="${ROOT}/.venv"
+VENV_PY="${VENV_DIR}/bin/python"
+
+create_venv() {
+    if command -v uv >/dev/null 2>&1; then
+        uv venv --quiet "${VENV_DIR}" >&2
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -m venv "${VENV_DIR}" >&2
+    elif command -v python >/dev/null 2>&1; then
+        python -m venv "${VENV_DIR}" >&2
+    else
+        echo "venv-python: nem uv nem python3 encontrados para criar ${VENV_DIR}" >&2
+        exit 127
+    fi
+}
+
+if [[ ! -x "${VENV_PY}" ]]; then
+    LOCK="${ROOT}/.ctx/venv.lock"
+    mkdir -p "${ROOT}/.ctx"
+    tries=0
+    until mkdir "${LOCK}" 2>/dev/null; do
+        tries=$((tries + 1))
+        if [[ ${tries} -ge 600 ]]; then
+            # Lock órfão (processo interrompido): assume e segue
+            break
+        fi
+        sleep 0.1
+    done
+    if [[ ! -x "${VENV_PY}" ]]; then
+        create_venv
+    fi
+    rmdir "${LOCK}" 2>/dev/null || true
+fi
+
+exec "${VENV_PY}" "$@"

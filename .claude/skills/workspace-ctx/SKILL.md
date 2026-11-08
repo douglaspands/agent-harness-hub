@@ -1,29 +1,41 @@
 ---
 name: workspace-ctx
-description: Aceleração cirúrgica de contexto em 1 turno (RAG local FTS5, cache de binários, toolchains canônicos e Graph Engineering). Ative no Turno 1 de qualquer tarefa no repositório.
+description: Aceleração cirúrgica de contexto em 1 turno (ctx status/map/search One-Shot, cache de binários e receitas, toolchains Sandbox-Safe e Graph Engineering). Ative no Turno 1 de qualquer tarefa no repositório.
 ---
 
 # Workspace CTX: Motor de Aceleração e Governança
 
-Esta skill instrui o agente sobre como operar com máxima eficiência de contexto e estrita conformidade com as regras de governança e toolchains do repositório.
+Esta skill instrui o agente a operar com máxima eficiência de contexto, acertando cada comando na 1ª tentativa e respeitando as regras de governança do repositório (`policy.toml` + `scripts/guardrail.py`).
 
-## 1. Diretriz de Descoberta em 1 Turno (< 10ms)
-- **Anti-Exploração Cega**: NUNCA execute comandos como `ls -R`, `find .`, `tree` ou leia arquivos inteiros para localizar código ou regras.
-- No **Turno 1**, use sempre o motor RAG local:
-  - Para entender a estrutura e divisões do projeto: execute `uv run ctx map` (ou `./bin/ctx map`).
-  - Para localizar classes, funções, regras ou temas: execute `uv run ctx search "<termo>" --top 5` (ou `./bin/ctx search "<termo>"`).
-- O resultado retornará referências cirúrgicas no formato `arquivo:inicio-fim`. Leia apenas esse intervalo de linhas (`read_file` com linhas específicas), consumindo apenas 150 a 400 tokens.
+## 1. Descoberta One-Shot em 1 Turno (< 15ms)
+- **Anti-Exploração Cega**: NUNCA execute `ls -R`, `find .`, `tree` sem `-L`, `grep -r` ou leia arquivos inteiros para localizar código ou regras. O guardrail recusa essas variantes (`deny`) e devolve a Receita One-Shot correta.
+- No **Turno 1**, use o motor `ctx` (`.venv/bin/ctx` ou `uv run ctx`), em chamadas paralelas no mesmo turno quando fizer sentido:
+  - `.venv/bin/ctx status` — Git (`status -s -b`), changes OpenSpec ativas com progresso `X/Y` e próximas tarefas, saúde do índice e do cache.
+  - `.venv/bin/ctx map [subcaminhos...]` — mapa estrutural (oculta `openspec/changes/archive/`; use `--include-archive` se precisar).
+  - `.venv/bin/ctx search "<q1>" "<q2>" --lines 25 [--path src]` — várias queries numa chamada, com 25 linhas de preview por resultado.
+- O retorno `arquivo:inicio-fim` indica exatamente o que ler; leia só esse intervalo quando o preview não bastar.
 
-## 2. Ferramentas e Executores Canônicos
-- **Zero Sondagem**: Não execute `which`, `whereis` ou `--version`. Consulte `.ctx/bins.json` ou execute `uv run ctx bins`.
-- **Python**: Invoque EXCLUSIVAMENTE via `uv run` (ou `./bin/ctx`). É proibido invocar `python` ou `python3` diretamente.
-- **Node.js**: Invoque EXCLUSIVAMENTE via `asdf exec` ou shims em `~/.asdf/shims`.
+## 2. Ferramentas, Toolchains Sandbox-Safe e Receitas One-Shot
+- **Zero Sondagem**: Não execute `which`, `whereis` ou `--version`. Consulte `.ctx/bins.json` ou `.venv/bin/ctx bins`.
+- **Python**: sempre a partir do `.venv` do projeto — `uv run ...` ou os executores locais `.venv/bin/ctx` / `.venv/bin/python` (funcionam mesmo em sandbox sem `uv`). `python`, `python3` e `/usr/bin/python*` globais recebem `deny`.
+  - **Sem `uv` na máquina**: use o Python da máquina **apenas** para criar o venv (`python3 -m venv .venv`) e, a partir daí, só `.venv/bin/python` (ex.: `.venv/bin/python -m pip install ...`). Nunca rode scripts ou testes com o Python global.
+- **Node.js**: `asdf exec` ou shims em `~/.asdf/shims`. `/usr/bin/node` e afins recebem `deny`.
+- **Receitas One-Shot**: `rg -n --heading -C 2 "<padrao>" [caminho]`, `fd --max-depth 3 --exclude archive "<padrao>"`, `tree -L 2 --dirsfirst -I ".venv|__pycache__|.git|.ctx|archive"`, `git status -s -b`, `git log --oneline --decorate -n 10`.
 
-## 3. Graph Engineering (Proibição de Encadeamento Shell)
+## 3. Decisões do Guardrail
+- `deny`: segredos, padrões destrutivos, encadeamento shell, toolchains globais, comandos ineficientes (com a receita correta na mensagem).
+- `ask`: `sudo`, instalação de pacotes, `systemctl start/stop/restart`, `git push`/`commit`, wrappers (`env`, `xargs`, `sh -c`…), `>`, `tee`, `--privileged`, escrita em arquivos protegidos ou fora do workspace, `~/data`.
+- `defer`: baixo risco fora da whitelist — o harness decide pelo próprio modo de permissão.
+
+## 4. Graph Engineering (Proibição de Encadeamento Shell)
 - Comandos com `&&`, `||`, `;`, `&`, subshells `$()` ou backticks serão rejeitados imediatamente (`deny`) pelo guardrail.
 - **Paralelismo Leve**: Execute múltiplas chamadas atômicas de ferramentas no mesmo turno.
-- **Paralelismo Complexo**: Estruture tarefas como DAG Fan-Out com subagentes especializados independentes e consolidação Fan-In.
+- **Paralelismo Complexo**: Estruture tarefas como DAG Fan-Out com subagentes especializados independentes (nunca dois editando o mesmo arquivo) e consolidação Fan-In com validação (`.venv/bin/python -m unittest discover -s tests -v` e `.venv/bin/ctx doctor`).
 
-## 4. Governança de Containers e Btrfs
-- **Container-First**: Utilitários auxiliares e bancos de dados temporários devem rodar via containers efêmeros rootless (`podman run --rm` ou `docker run --rm`). NUNCA instale pacotes no host.
+## 5. Ferramentas Nativas de Arquivo
+- Leia, edite e crie arquivos com as ferramentas do harness (Claude Code: `Read`/`Edit`/`Write`; Gemini CLI: `read_file`/`replace`/`write_file`; Codex: `apply_patch` para escrever), não com `cat`/`head`/`sed -n` nem `sed -i`/`>`/heredoc/`tee`.
+- Com `[file_tools] mode = "coach"` no `policy.toml`, o guardrail nega essas variantes com a ferramenta certa na mensagem. A adesão é medida com `.venv/bin/ctx metrics`.
+
+## 6. Governança de Containers e Btrfs
+- **Container-First**: Utilitários auxiliares e bancos de dados temporários devem rodar via containers efêmeros rootless (`podman run --rm` ou `docker run --rm`). NUNCA instale pacotes no host sem confirmação.
 - **Armazenamento Btrfs**: Pergunte ao usuário antes de salvar bancos de dados ou datasets pesados em `~/data` (`chattr +C` / No-COW).

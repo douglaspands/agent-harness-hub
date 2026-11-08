@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|apply_patch)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)\"; \"$root/scripts/venv-python\" \"$root/scripts/guardrail.py\"",
+            "timeout": 30,
+            "statusMessage": "agent-harness-hub guardrail"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -6,16 +6,30 @@ Descoberta dinâmica da raiz do workspace, caminhos de cache e definições de a
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+__version__ = "0.2.0"
 
 
 def find_workspace_root(start_path: Path | None = None) -> Path:
-    """Descobre a raiz do repositório procurando policy.toml, pyproject.toml ou .git."""
-    curr = (start_path or Path(__file__)).resolve()
-    for parent in [curr] + list(curr.parents):
-        if (parent / "policy.toml").exists() or (parent / "pyproject.toml").exists() or (parent / ".git").exists():
-            return parent
-    return curr.parent.parent
+    """Descobre a raiz do workspace a partir do diretório atual.
+
+    Ordem: variável CTX_WORKSPACE > 1º ancestral com policy.toml > 1º ancestral com .git > diretório inicial.
+    Partir do cwd (e não de __file__) permite rodar o ctx instalado como dependência (.venv/bin/ctx)
+    ou como ferramenta (uv tool / uvx) dentro de qualquer projeto.
+    """
+    env_root = os.environ.get("CTX_WORKSPACE")
+    if env_root:
+        return Path(env_root).expanduser().resolve()
+
+    curr = (start_path or Path.cwd()).resolve()
+    chain = [curr, *curr.parents]
+    for marker in ("policy.toml", ".git"):
+        for parent in chain:
+            if (parent / marker).exists():
+                return parent
+    return curr
 
 
 WORKSPACE_ROOT = find_workspace_root()
