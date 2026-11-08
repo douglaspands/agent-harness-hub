@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "hooks": [
+          {
+            "name": "agent-harness-hub-guardrail",
+            "type": "command",
+            "command": "\"$GEMINI_PROJECT_DIR/scripts/venv-python\" \"$GEMINI_PROJECT_DIR/scripts/guardrail.py\"",
+            "timeout": 30000
+          }
+        ]
+      }
+    ]
+  }
+}

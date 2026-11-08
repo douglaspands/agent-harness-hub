@@ -1,0 +1,23 @@
+# agent-harness-hub
+
+> Catálogo de prompts e kit portátil de autonomia com segurança para agent harnesses (Claude Code, Codex, Cursor, Gemini CLI, Antigravity e qualquer agente que leia AGENTS.md): guardrail de pré-execução com decisões allow/ask/deny/defer no protocolo de cada harness, política declarativa (policy.toml), toolchains que nunca usam o Python global, receitas One-Shot e motor local `ctx` (busca SQLite FTS5, mapa estrutural, status). Versão estável: v0.2.0. Use sempre URLs com tag, nunca `main`.
+
+Para instalar em um projeto, leia e siga apenas o BOOTSTRAP. O código é instalado a partir do pacote versionado (`ctx init`), não copiado destes textos.
+
+## Instalação
+
+- [BOOTSTRAP v0.2.0](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.2.0/BOOTSTRAP.md): kit completo — passo a passo para agentes, com regras de confirmação, variantes com e sem uv e validação.
+- [INSTALL de prompts v0.2.0](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.2.0/prompts/INSTALL.md): instala prompts individuais do catálogo em AGENTS.md/CLAUDE.md/GEMINI.md, sem instalar o kit.
+- [Catálogo de prompts v0.2.0](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.2.0/prompts/catalog.json): IDs, resumos e caminhos (JSON).
+
+## Referência
+
+- [Guia de Replicação v0.2.0](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.2.0/guides/guia-replicacao-rag-e-seguranca.md): arquitetura, racional de cada ferramenta, fluxo decisório do guardrail e diagramas.
+- [Template de policy.toml v0.2.0](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.2.0/templates/policy.toml.example): todas as chaves da política com comentários.
+
+## Optional
+
+- [Prompt: Descoberta One-Shot](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.2.0/prompts/discovery/descoberta-em-1-turno.md)
+- [Prompt: Toolchains Sandbox-Safe](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.2.0/prompts/toolchains-and-executors/enforcement-toolchains-canonicos.md)
+- [Prompt: Graph Engineering](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.2.0/prompts/graph-engineering/dag-fanout-fanin.md)
+- [Prompt: Container-First e Btrfs](https://raw.githubusercontent.com/douglaspands/agent-harness-hub/v0.2.0/prompts/governance-and-guardrails/container-first-e-btrfs.md)

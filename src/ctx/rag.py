@@ -1,20 +1,31 @@
-"""Motor de RAG local ultra-performático baseado em SQLite FTS5 e AST/Markdown Chunking.
+"""Motor de RAG local One-Shot baseado em SQLite FTS5/BM25 e AST/Markdown Chunking.
 
-Zero dependências externas (100% biblioteca padrão: sqlite3, ast, hashlib, pathlib, time).
+Inclui:
+- Busca multi-query com preview de N linhas e filtro por subcaminho (`ctx search`).
+- Mapa estrutural multi-alvo que oculta `openspec/changes/archive/` (`ctx map`).
+- Visão consolidada One-Shot: Git + OpenSpec + saúde do índice/cache (`ctx status`).
+
+Zero dependências externas (100% biblioteca padrão: sqlite3, ast, json, pathlib, subprocess, time).
 """
 
 from __future__ import annotations
 
 import ast
-import hashlib
+import json
 import re
+import shutil
 import sqlite3
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
-from ctx import CTX_DIR, INDEX_DB, WORKSPACE_ROOT
+from ctx import WORKSPACE_ROOT
+
+ARCHIVE_PREFIX = "openspec/changes/archive/"
+MAP_PRIORITY = ("src/", "scripts/", "tests/", "openspec/changes/")
+DEFAULT_PREVIEW_LINES = 25
 
 IGNORED_DIRS = {
     ".git",
@@ -67,8 +78,14 @@ class Chunk:
     content: str
 
 
-def get_db(db_path: Path = INDEX_DB) -> sqlite3.Connection:
+def db_path_for(workspace_root: Path) -> Path:
+    """Caminho do índice FTS5 do workspace informado (cada workspace tem o próprio .ctx/index.db)."""
+    return workspace_root / ".ctx" / "index.db"
+
+
+def get_db(db_path: Path | None = None) -> sqlite3.Connection:
     """Abre conexão com o banco SQLite em modo WAL e cria as tabelas necessárias."""
+    db_path = db_path or db_path_for(WORKSPACE_ROOT)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(db_path))
     con.execute("PRAGMA journal_mode=WAL;")
@@ -196,9 +213,13 @@ def extract_markdown_chunks(file_path: Path, rel_path: str, content: str) -> lis
     current_title = f"{file_path.name} (intro)"
     current_start = 1
     current_lines: list[str] = []
+    in_fence = False
 
     for i, line in enumerate(lines, start=1):
-        match = header_pattern.match(line)
+        if line.lstrip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+        # Linhas "# ..." dentro de blocos de código (comentários TOML/bash, snippets) não são títulos
+        match = None if in_fence else header_pattern.match(line)
         if match:
             if current_lines:
                 chunk_text = "\n".join(current_lines).strip()
@@ -317,7 +338,7 @@ def os_walk_filtered(root_dir: Path) -> Iterator[tuple[Path, list[str], list[str
         for e in entries:
             name = e.name
             if e.is_dir():
-                if name not in IGNORED_DIRS and not name.startswith("."):
+                if name not in IGNORED_DIRS and not name.startswith(".") and not name.endswith(".egg-info"):
                     dirs.append(name)
                     stack.append(e)
             elif e.is_file():
@@ -328,7 +349,7 @@ def os_walk_filtered(root_dir: Path) -> Iterator[tuple[Path, list[str], list[str
 def index_workspace(workspace_root: Path = WORKSPACE_ROOT, force: bool = False) -> dict[str, Any]:
     """Indexa incrementalmente o repositório em SQLite FTS5."""
     start_t = time.perf_counter()
-    con = get_db()
+    con = get_db(db_path_for(workspace_root))
 
     existing_rows = con.execute("SELECT path, mtime_ns, size FROM indexed_files").fetchall()
     cached_meta = {row[0]: (row[1], row[2]) for row in existing_rows}
@@ -401,31 +422,66 @@ def sanitize_query(query: str) -> str:
     return " ".join(f'"{t}"' for t in tokens)
 
 
-def search(query: str, top_k: int = 5, workspace_root: Path = WORKSPACE_ROOT) -> dict[str, Any]:
-    """Busca cirúrgica rankeada por BM25 (< 10ms)."""
-    # Garante indexação incremental rápida antes da busca
-    index_workspace(workspace_root=workspace_root, force=False)
+def normalize_subpath(subpath: str) -> str:
+    """Normaliza um subcaminho para prefixo relativo ('./src' -> 'src')."""
+    sp = subpath.strip().removeprefix("./").rstrip("/")
+    return "" if sp in ("", ".") else sp
 
-    start_t = time.perf_counter()
-    con = get_db()
-    sanitized = sanitize_query(query)
 
-    results: list[dict[str, Any]] = []
-    if sanitized:
+def path_matches(path: str, subpaths: list[str]) -> bool:
+    """True se `path` é o próprio subcaminho ou está dentro dele (lista vazia casa tudo)."""
+    prefixes = [normalize_subpath(s) for s in subpaths]
+    if not prefixes or "" in prefixes:
+        return True
+    return any(path == p or path.startswith(p + "/") for p in prefixes)
+
+
+def read_preview(workspace_root: Path, rel_path: str, start: int, end: int, max_lines: int, cache: dict[str, list[str]]) -> str:
+    """Lê até `max_lines` linhas reais do arquivo a partir de `start` (sem passar de `end`)."""
+    if max_lines <= 0:
+        return ""
+    if rel_path not in cache:
         try:
-            cursor = con.execute(
-                """
-                SELECT path, title, chunk_type, start_line, end_line,
-                       snippet(chunks, 5, '>>> ', ' <<<', '...', 25) AS snip,
-                       bm25(chunks) AS rank
-                FROM chunks
-                WHERE chunks MATCH ?
-                ORDER BY rank
-                LIMIT ?
-                """,
-                (sanitized, top_k),
-            )
-            for row in cursor.fetchall():
+            cache[rel_path] = (workspace_root / rel_path).read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            cache[rel_path] = []
+    lines = cache[rel_path]
+    stop = min(int(end), int(start) + max_lines - 1, len(lines))
+    width = len(str(stop))
+    return "\n".join(f"{n:>{width}}  {lines[n - 1]}" for n in range(int(start), stop + 1))
+
+
+def _search_one(
+    con: sqlite3.Connection,
+    workspace_root: Path,
+    query: str,
+    top_k: int,
+    path_prefix: str | None,
+    lines: int,
+    file_cache: dict[str, list[str]],
+) -> dict[str, Any]:
+    start_t = time.perf_counter()
+    sanitized = sanitize_query(query)
+    results: list[dict[str, Any]] = []
+
+    if sanitized:
+        sql = """
+            SELECT path, title, chunk_type, start_line, end_line,
+                   snippet(chunks, 5, '>>> ', ' <<<', '...', 25) AS snip,
+                   bm25(chunks) AS rank
+            FROM chunks
+            WHERE chunks MATCH ?
+        """
+        params: list[Any] = [sanitized]
+        prefix = normalize_subpath(path_prefix or "")
+        if prefix:
+            sql += " AND (path = ? OR path LIKE ? ESCAPE '\\')"
+            escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            params += [prefix, escaped + "/%"]
+        sql += " ORDER BY rank LIMIT ?"
+        params.append(top_k)
+        try:
+            for row in con.execute(sql, params).fetchall():
                 results.append(
                     {
                         "path": row[0],
@@ -435,58 +491,200 @@ def search(query: str, top_k: int = 5, workspace_root: Path = WORKSPACE_ROOT) ->
                         "start_line": row[3],
                         "end_line": row[4],
                         "snippet": row[5].strip(),
+                        "preview": read_preview(workspace_root, row[0], row[3], row[4], lines, file_cache),
                         "score": round(float(row[6]), 3),
                     }
                 )
         except sqlite3.OperationalError:
             pass
 
-    con.close()
-    elapsed_ms = (time.perf_counter() - start_t) * 1000
-
     return {
         "query": query,
         "results": results,
         "count": len(results),
-        "elapsed_ms": round(elapsed_ms, 2),
+        "elapsed_ms": round((time.perf_counter() - start_t) * 1000, 2),
     }
 
 
-def get_map(workspace_root: Path = WORKSPACE_ROOT) -> dict[str, Any]:
-    """Retorna o mapa estrutural hierárquico do repositório (< 10ms)."""
+def search_many(
+    queries: list[str],
+    top_k: int = 5,
+    workspace_root: Path = WORKSPACE_ROOT,
+    path_prefix: str | None = None,
+    lines: int = DEFAULT_PREVIEW_LINES,
+) -> dict[str, Any]:
+    """Busca multi-query One-Shot rankeada por BM25, com preview de `lines` linhas por resultado."""
     index_workspace(workspace_root=workspace_root, force=False)
     start_t = time.perf_counter()
-    con = get_db()
+    con = get_db(db_path_for(workspace_root))
+    file_cache: dict[str, list[str]] = {}
+    try:
+        per_query = [_search_one(con, workspace_root, q, top_k, path_prefix, lines, file_cache) for q in queries]
+    finally:
+        con.close()
+    return {
+        "queries": per_query,
+        "path": path_prefix,
+        "elapsed_ms": round((time.perf_counter() - start_t) * 1000, 2),
+    }
 
-    cursor = con.execute(
-        """
-        SELECT path, title, chunk_type, start_line, end_line
-        FROM chunks
-        ORDER BY path, start_line
-        """
-    )
+
+def search(
+    query: str,
+    top_k: int = 5,
+    workspace_root: Path = WORKSPACE_ROOT,
+    path_prefix: str | None = None,
+    lines: int = DEFAULT_PREVIEW_LINES,
+) -> dict[str, Any]:
+    """Busca cirúrgica de uma única query (atalho para search_many)."""
+    res = search_many([query], top_k=top_k, workspace_root=workspace_root, path_prefix=path_prefix, lines=lines)
+    single = res["queries"][0]
+    single["elapsed_ms"] = res["elapsed_ms"]
+    return single
+
+
+def map_priority(path: str) -> tuple[int, str]:
+    """Ordena código ativo (src/, scripts/, tests/, changes ativas) antes de config e documentação."""
+    for i, prefix in enumerate(MAP_PRIORITY):
+        if path.startswith(prefix):
+            return i, path
+    if path.endswith((".md", ".markdown")):
+        return len(MAP_PRIORITY) + 1, path
+    return len(MAP_PRIORITY), path
+
+
+def get_map(
+    workspace_root: Path = WORKSPACE_ROOT,
+    subpaths: list[str] | None = None,
+    include_archive: bool = False,
+) -> dict[str, Any]:
+    """Mapa estrutural multi-alvo (oculta openspec/changes/archive/ por padrão)."""
+    index_workspace(workspace_root=workspace_root, force=False)
+    start_t = time.perf_counter()
+    con = get_db(db_path_for(workspace_root))
+    try:
+        rows = con.execute("SELECT path, title, chunk_type, start_line, end_line FROM chunks").fetchall()
+    finally:
+        con.close()
+
+    subpaths = subpaths or []
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    hidden_archive = set()
+    for path, title, ctype, start, end in rows:
+        if not path_matches(path, subpaths):
+            continue
+        if not include_archive and path.startswith(ARCHIVE_PREFIX):
+            hidden_archive.add(path)
+            continue
+        grouped.setdefault(path, []).append(
+            {"title": title, "type": ctype, "lines": f"L{start}-L{end}", "_start": int(start)}
+        )
 
     tree: dict[str, list[dict[str, Any]]] = {}
     total_chunks = 0
-    for row in cursor.fetchall():
-        path, title, ctype, start, end = row[0], row[1], row[2], row[3], row[4]
-        if path not in tree:
-            tree[path] = []
-        tree[path].append(
-            {
-                "title": title,
-                "type": ctype,
-                "lines": f"L{start}-L{end}",
-            }
-        )
-        total_chunks += 1
-
-    con.close()
-    elapsed_ms = (time.perf_counter() - start_t) * 1000
+    for path in sorted(grouped, key=map_priority):
+        chunks = sorted(grouped[path], key=lambda c: c["_start"])
+        for c in chunks:
+            c.pop("_start")
+        tree[path] = chunks
+        total_chunks += len(chunks)
 
     return {
         "files_count": len(tree),
         "chunks_count": total_chunks,
         "tree": tree,
-        "elapsed_ms": round(elapsed_ms, 2),
+        "subpaths": subpaths,
+        "hidden_archive_files": len(hidden_archive),
+        "elapsed_ms": round((time.perf_counter() - start_t) * 1000, 2),
+    }
+
+
+TASK_RE = re.compile(r"^\s*[-*]\s+\[( |x|X)\]\s+(.*)$")
+
+
+def parse_tasks(tasks_file: Path, max_pending: int = 3) -> dict[str, Any]:
+    """Conta checkboxes de um tasks.md (OpenSpec) e retorna as próximas tarefas pendentes."""
+    done = total = 0
+    pending: list[str] = []
+    try:
+        text = tasks_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {"done": 0, "total": 0, "next": []}
+    for line in text.splitlines():
+        m = TASK_RE.match(line)
+        if not m:
+            continue
+        total += 1
+        if m.group(1).lower() == "x":
+            done += 1
+        elif len(pending) < max_pending:
+            pending.append(m.group(2).strip())
+    return {"done": done, "total": total, "next": pending}
+
+
+def openspec_status(workspace_root: Path) -> dict[str, Any]:
+    """Changes OpenSpec ativas (com progresso X/Y) separadas das arquivadas."""
+    changes_dir = workspace_root / "openspec" / "changes"
+    if not changes_dir.is_dir():
+        return {"present": False, "active": [], "archived_count": 0}
+    active = []
+    for d in sorted(p for p in changes_dir.iterdir() if p.is_dir() and p.name != "archive"):
+        info = parse_tasks(d / "tasks.md")
+        active.append({"name": d.name, **info})
+    archive_dir = changes_dir / "archive"
+    archived = sum(1 for p in archive_dir.iterdir() if p.is_dir()) if archive_dir.is_dir() else 0
+    return {"present": True, "active": active, "archived_count": archived}
+
+
+def git_status(workspace_root: Path) -> dict[str, Any]:
+    git = shutil.which("git")
+    if not git or not (workspace_root / ".git").exists():
+        return {"available": False, "lines": []}
+    try:
+        out = subprocess.run(
+            [git, "-C", str(workspace_root), "status", "-s", "-b"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"available": False, "lines": []}
+    return {"available": out.returncode == 0, "lines": out.stdout.splitlines()}
+
+
+def status(workspace_root: Path = WORKSPACE_ROOT) -> dict[str, Any]:
+    """Visão consolidada One-Shot: Git, OpenSpec, saúde do índice FTS5 e do cache de binários."""
+    start_t = time.perf_counter()
+    idx = index_workspace(workspace_root=workspace_root, force=False)
+
+    con = get_db(db_path_for(workspace_root))
+    try:
+        files_count = con.execute("SELECT COUNT(*) FROM indexed_files").fetchone()[0]
+        chunks_count = con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    finally:
+        con.close()
+
+    bins_file = workspace_root / ".ctx" / "bins.json"
+    bins: dict[str, Any] = {"present": bins_file.exists()}
+    if bins_file.exists():
+        try:
+            data = json.loads(bins_file.read_text(encoding="utf-8"))
+            binaries = data.get("binaries", {})
+            bins.update(
+                {
+                    "generated_at": data.get("generated_at"),
+                    "available": sum(1 for v in binaries.values() if v.get("available")),
+                    "total": len(binaries),
+                }
+            )
+        except (OSError, ValueError):
+            bins["present"] = False
+
+    return {
+        "git": git_status(workspace_root),
+        "openspec": openspec_status(workspace_root),
+        "index": {"files": files_count, "chunks": chunks_count, "reindexed": idx["indexed"]},
+        "bins": bins,
+        "elapsed_ms": round((time.perf_counter() - start_t) * 1000, 2),
     }

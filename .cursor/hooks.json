@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": "scripts/venv-python scripts/guardrail.py",
+        "timeout": 30
+      }
+    ],
+    "beforeReadFile": [
+      {
+        "command": "scripts/venv-python scripts/guardrail.py",
+        "timeout": 30
+      }
+    ]
+  }
+}

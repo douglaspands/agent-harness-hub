@@ -3,29 +3,50 @@
 
 Este repositório é gerenciado pelo **motor `ctx`** com governança multi-harness (`policy.toml`) e guardrail ativo (`scripts/guardrail.py`).
 
-### 1. Descoberta Cirúrgica em 1 Turno (< 10ms)
-- **NUNCA** execute varreduras cegas (`ls -R`, `find .`, `tree`) nem leia arquivos inteiros para localizar código ou regras.
-- No **Turno 1**, utilize o motor RAG local:
-  - Para mapear a arquitetura completa: execute `uv run ctx map` (ou `python3 -m ctx map`).
-  - Para localizar classes, funções ou regras específicas: execute `uv run ctx search "<termo>" --top 5`.
-- Utilize o retorno `arquivo:inicio-fim` para ler cirurgicamente apenas as linhas necessárias, consumindo 150 a 400 tokens por consulta.
+### 1. Descoberta One-Shot em 1 Turno (< 15ms)
+- **NUNCA** execute varreduras cegas (`ls -R`, `find .`, `tree` sem `-L`, `grep -r`) nem leia arquivos inteiros para localizar código ou regras.
+- No **Turno 1**, use o motor `ctx` (`.venv/bin/ctx`), em chamadas paralelas no mesmo turno:
+  - Estado consolidado (Git + changes OpenSpec + saúde do índice): `.venv/bin/ctx status`.
+  - Mapa estrutural (sem `openspec/changes/archive/`): `.venv/bin/ctx map [subcaminhos...]`.
+  - Busca multi-query com preview de 25 linhas: `.venv/bin/ctx search "<q1>" "<q2>" --lines 25 [--path src]`.
+- Use o retorno `arquivo:inicio-fim` para ler cirurgicamente só as linhas necessárias.
 
-### 2. Cache de Ferramentas e Executores Canônicos
-- **Zero turnos de sondagem**: NÃO rode `which`, `whereis` ou `--version`.
+### 2. Cache de Ferramentas, Toolchains Sandbox-Safe e Receitas One-Shot
+- **Zero turnos de sondagem**: NÃO rode `which`, `whereis` ou `--version`. Consulte `.ctx/bins.json`.
 - Ferramentas pré-verificadas disponíveis no ambiente:
-  `cargo`, `cat`, `docker`, `fd`, `git`, `go`, `head`, `jq`, `ls`, `podman`, `pwd`, `python`, `python3`, `rg`, `rustc`, `sqlite3`, `tail`, `tree`, `wc`, `which`
-- **Toolchains Canônicos Obrigatórios**:
-- **Python**: Invoque EXCLUSIVAMENTE via `uv run`. Proibido: `python`, `python3`, `/usr/bin/python`, `/usr/bin/python3`, `.venv/bin/python`, `.venv/bin/python3`. (Python deve ser executado exclusivamente via 'uv run' (ou 'ctx') usando o .venv local.)
-- **Nodejs**: Invoque EXCLUSIVAMENTE via `asdf exec`. Proibido: `/usr/bin/node`, `/usr/bin/npm`, `/usr/bin/npx`, `/usr/local/bin/node`. (Node.js/npm/npx devem usar a versão gerenciada pelo asdf (~/.asdf/shims ou 'asdf exec').)
-- Tentativas de usar binários proibidos ou bypassar o ambiente virtual receberão **`deny` imediato** do guardrail.
+  `asdf`, `cargo`, `cat`, `ctx`, `dnf`, `docker`, `fd`, `git`, `go`, `head`, `hostnamectl`, `ip`, `journalctl`, `jq`, `ls`, `lsattr`, `node`, `npm`, `npx`, `podman`, `pwd`, `pytest`, `python`, `python3`, `rg`, `rpm`, `rustc`, `sqlite3`, `systemctl`, `tail`, `tree`, `uv`, `wc`
+- **Toolchains**:
+- **Python**: Invoque via `uv run` ou `.venv/bin/ctx` ou `.venv/bin/python` ou `.venv/bin/python3`. Proibido: `python`, `python3`, `/usr/bin/python`, `/usr/bin/python3`, `/usr/local/bin/python`, `/usr/local/bin/python3`. (Python deve ser executado via 'uv run' ou pelo .venv do workspace ('.venv/bin/ctx' / '.venv/bin/python'), nunca pelo python global. Sem uv, o python da máquina serve só para criar o venv: 'python3 -m venv .venv'.)
+- **Nodejs**: Invoque via `asdf exec`. Proibido: `/usr/bin/node`, `/usr/bin/npm`, `/usr/bin/npx`, `/usr/local/bin/node`. (Node.js/npm/npx devem usar a versão gerenciada pelo asdf (~/.asdf/shims ou 'asdf exec').)
+- Binários globais proibidos recebem **`deny` imediato**; os executores locais do `.venv` funcionam mesmo em sandbox sem `uv`.
+- **Receitas One-Shot** (comandos ineficientes recebem `deny` instrutivo com a receita correta):
 
-### 3. Graph Engineering e Proibição de Encadeamento Shell
-- É **estritamente proibido** encadear comandos shell com `&&`, `||`, `;`, `&`, subshells `$()` ou backticks. Cada comando deve ser atômico.
-- Para tarefas paralelas:
-  - **Paralelismo Leve**: Emita múltiplas chamadas atômicas de ferramentas no mesmo turno.
-  - **Paralelismo Complexo**: Utilize subagentes especializados concorrentes (DAG Fan-Out) coordenados por um Agente Consolidador (Fan-In).
+| Receita | Comando |
+| :--- | :--- |
+| `ctx_status` | `.venv/bin/ctx status` |
+| `ctx_map` | `.venv/bin/ctx map [subcaminhos...]` |
+| `ctx_search` | `.venv/bin/ctx search "<q1>" ["<q2>" ...] --lines 25` |
+| `rg_context` | `rg -n --heading -C 2 "<padrao>" [caminho]` |
+| `fd_scoped` | `fd --max-depth 3 --exclude archive "<padrao>" [caminho]` |
+| `tree_compact` | `tree -L 2 --dirsfirst -I ".venv\|__pycache__\|.git\|.ctx\|archive"` |
+| `git_status_short` | `git status -s -b` |
+| `git_log_compact` | `git log --oneline --decorate -n 10` |
 
-### 4. Política Container-First e Armazenamento Btrfs
+### 3. Decisões do Guardrail
+- `deny`: segredos (`paths.deny`), padrões destrutivos, encadeamento shell, toolchains proibidos e comandos ineficientes (coaching).
+- `ask` (forte): `sudo`, instalação de pacotes, `systemctl start/stop/restart`, `git push`, wrappers (`env`, `xargs`, `sh -c`…), redirecionamento `>`, `tee`, `--privileged`, escrita em arquivos protegidos ou fora do workspace e qualquer acesso a `~/data`.
+- `defer`: baixo risco fora da whitelist (comandos/filtros não listados, leitura fora do workspace) — o Claude Code segue o próprio modo de permissão; o Antigravity pergunta (`force_ask`).
+
+### 4. Comandos Atômicos (sem encadeamento shell)
+- É **proibido** encadear comandos shell com `&&`, `||`, `;`, `&`, subshells `$()` ou backticks: o guardrail recusa (`deny`).
+- Execute **um comando por chamada**, para que cada um seja avaliado e auditado sozinho.
+
+### 5. Política Container-First e Armazenamento Btrfs
 - **Container-First**: Para utilitários ou bancos de dados temporários (PostgreSQL, Redis, etc.), utilize containers efêmeros rootless (`podman run --rm` ou `docker run --rm`). NUNCA instale pacotes no host sem confirmação explícita.
 - **Armazenamento Btrfs No-COW**: Em caso de manipulação de bancos de dados pesados, datasets volumosos ou imagens de VM, pergunte ao usuário se autoriza utilizar `~/data` (`chattr +C` / No-COW para evitar fragmentação no Btrfs).
+
+### 6. Ferramentas Nativas de Arquivo
+- **Ler**: ferramenta `Read` (use `offset`/`limit` para trechos indicados pelo `ctx search`). Vários arquivos: várias chamadas `Read` no mesmo turno.
+- **Editar**: `Edit` (substituição exata). **Criar/reescrever**: `Write`.
+- **Não use o shell para isso**: nada de `cat`/`head`/`tail`/`sed -n` para ler, nem `sed -i`, `>`, `>>`, heredoc (`<<EOF`) ou `tee` para escrever. O shell fica para executar programas, testes, git e buscas (`ctx search`, `rg`).
 <!-- AUTOGENERATED_BY_CTX_END -->

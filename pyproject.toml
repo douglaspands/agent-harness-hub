@@ -1,6 +1,6 @@
 [project]
 name = "agent-harness-hub"
-version = "0.1.0"
+version = "0.2.0"
 description = "Hub de prompts, governança e motor universal de aceleração para agent harnesses"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -9,6 +9,13 @@ dependencies = []
 [project.scripts]
 ctx = "ctx.cli:main"
 
+[project.urls]
+Repository = "https://github.com/douglaspands/agent-harness-hub"
+
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+# Kit instalado pelo `ctx init` em outros projetos (guardrail, template de policy e skill)
+ctx = ["kit/*"]

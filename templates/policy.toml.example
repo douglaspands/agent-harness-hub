@@ -1,25 +1,94 @@
-# Exemplo de policy.toml para governança de Agent Harnesses
-# Fonte única declarativa para guardrails multi-harness (Antigravity e Claude Code)
+# Exemplo de policy.toml para governança de Agent Harnesses (copie para a raiz do repositório como policy.toml)
+# Fonte única declarativa: sincroniza Antigravity (.agents/hooks.json, GEMINI.md) e Claude Code (.claude/settings.json, CLAUDE.md)
+# Após editar: execute `.venv/bin/ctx rule sync` (ou `uv run ctx rule sync`).
+# Os comandos de diagnóstico de pacotes abaixo são de Fedora/RHEL; em Debian/Ubuntu troque por
+# "dpkg -l", "apt list", "apt show", "apt search".
 
 [project]
 name = "meu-projeto"
+version = "0.1.0"
+
+[ctx]
+# Como os agentes invocam o motor ctx neste projeto (usado nas instruções geradas em AGENTS.md/CLAUDE.md/GEMINI.md).
+# Padrão: ".venv/bin/ctx" (kit instalado no .venv do projeto; funciona em sandbox). Alternativa: "ctx" (uv tool install).
+runner = ".venv/bin/ctx"
 
 [commands]
-# Comandos aprovados automaticamente para autonomia ágil dentro do repositório
+# Comandos aprovados automaticamente (allow) para autonomia ágil dentro do repositório.
+# Comandos fora desta lista recebem `defer` (Claude Code: modo de permissão nativo / AGY: force_ask).
 allow = [
     "git status",
     "git diff",
     "git log",
+    "git branch",
+    "git show",
+    "git ls-files",
     "uv run",
+    "uv sync",
+    "uv venv",
+    "python3 -m venv .venv",
+    "scripts/venv-python",
+    ".venv/bin/ctx",
+    ".venv/bin/python",
+    "ctx",
+    "bin/ctx",
     "pytest",
+    "rg",
+    "fd",
+    "tree -L",
+    "jq",
+    "ls",
+    "cat",
+    "head",
+    "tail",
+    "wc",
+    "pwd",
+    "lsattr",
+    "systemctl is-active",
+    "systemctl is-enabled",
+    "systemctl is-failed",
+    "systemctl list-units",
+    "journalctl -u",
+    "journalctl -b",
+    "journalctl -p",
+    "hostnamectl",
+    "ip addr",
+    "ip -br addr",
+    "rpm -q",
+    "dnf list",
+    "dnf info",
+    "dnf search",
 ]
 
-# Comandos que exigem confirmação explícita do usuário
+# "Ask forte": operações sensíveis que sempre exigem confirmação explícita do usuário
 ask = [
     "git push",
     "git commit",
+    "git checkout",
+    "git reset",
+    "git rebase",
+    "git clean",
     "rm",
+    "chattr",
+    "dnf install",
+    "dnf remove",
+    "dnf upgrade",
+    "apt install",
+    "apt-get install",
+    "apt remove",
+    "brew install",
+    "pip install",
+    "uv pip install",
+    "npm install -g",
+    "systemctl start",
+    "systemctl stop",
+    "systemctl restart",
+    "systemctl enable",
+    "systemctl disable",
 ]
+
+# Wrappers que ocultam o comando real (sempre ask forte)
+wrappers = ["env", "xargs", "sh", "bash", "zsh", "nohup", "timeout", "nice", "exec", "eval", "command", "busybox"]
 
 # Comandos proibidos e bloqueados imediatamente
 deny = [
@@ -28,6 +97,8 @@ deny = [
     ":(){ :|:& };:",
     "curl | bash",
     "wget | bash",
+    "curl | sh",
+    "wget | sh",
 ]
 
 # Filtros seguros aprovados automaticamente em pipes simples (ex: cmd | rg termo)
@@ -44,11 +115,57 @@ safe_pipe_filters = [
     "tr",
 ]
 
+# Receitas One-Shot: comandos parametrizados que acertam na 1ª tentativa (injetadas no Turno 0)
+[commands.one_shot_recipes]
+ctx_status = ".venv/bin/ctx status"
+ctx_map = ".venv/bin/ctx map [subcaminhos...]"
+ctx_search = ".venv/bin/ctx search \"<q1>\" [\"<q2>\" ...] --lines 25"
+rg_context = "rg -n --heading -C 2 \"<padrao>\" [caminho]"
+fd_scoped = "fd --max-depth 3 --exclude archive \"<padrao>\" [caminho]"
+tree_compact = "tree -L 2 --dirsfirst -I \".venv|__pycache__|.git|.ctx|archive\""
+git_status_short = "git status -s -b"
+git_log_compact = "git log --oneline --decorate -n 10"
+
+# Coaching de Eficiência: variantes ineficientes recebem `deny` instrutivo com a Receita One-Shot
+[commands.inefficient_variants]
+"grep -r" = "Use a Receita One-Shot: rg -n --heading -C 2 \"<padrao>\" [caminho] (ou .venv/bin/ctx search \"<termo>\" --lines 25)"
+"grep -R" = "Use a Receita One-Shot: rg -n --heading -C 2 \"<padrao>\" [caminho] (ou .venv/bin/ctx search \"<termo>\" --lines 25)"
+"grep --recursive" = "Use a Receita One-Shot: rg -n --heading -C 2 \"<padrao>\" [caminho] (ou .venv/bin/ctx search \"<termo>\" --lines 25)"
+"find ." = "Use a Receita One-Shot: fd --max-depth 3 --exclude archive \"<padrao>\" [caminho] (ou .venv/bin/ctx map [subcaminhos...])"
+"ls -R" = "Use a Receita One-Shot: tree -L 2 --dirsfirst -I \".venv|__pycache__|.git|.ctx|archive\" (ou .venv/bin/ctx map)"
+tree_unbounded = "Sempre passe -L <nivel> no tree. Receita One-Shot: tree -L 2 --dirsfirst -I \".venv|__pycache__|.git|.ctx|archive\""
+git_log_unbounded = "Sempre limite o git log com -n <N>. Receita One-Shot: git log --oneline --decorate -n 10"
+
+[harnesses]
+# Harnesses que recebem hook do guardrail no `ctx rule sync` (arquivo de configuração do projeto de cada um):
+#   claude -> .claude/settings.json   codex -> .codex/hooks.json (confie em /hooks)   cursor -> .cursor/hooks.json
+#   gemini -> .gemini/settings.json   antigravity -> .agents/hooks.json (formato ainda não validado na doc oficial)
+# Instruções: AGENTS.md (Codex, Cursor, Copilot e outros), CLAUDE.md, GEMINI.md (Gemini CLI e Antigravity).
+# Remova da lista os harnesses que o projeto não usa.
+enabled = ["claude", "codex", "cursor", "gemini", "antigravity"]
+
+[harnesses.codex]
+# O hook do Codex não suporta "ask". "deny" (seguro): o agente recebe o motivo e pede ao usuário. "allow": deixa passar.
+ask_fallback = "deny"
+
+[harnesses.gemini]
+# O hook do Gemini CLI não documenta "ask". Mesmas opções do Codex.
+ask_fallback = "deny"
+
+[file_tools]
+# Leitura/escrita de arquivos via shell (cat/head/tail/sed -n, sed -i, >, >>, heredoc, tee) -> ferramenta nativa do harness.
+# "off": só instruções (AGENTS.md/CLAUDE.md/GEMINI.md). "coach": o guardrail nega com a ferramenta certa na mensagem.
+# Meça antes e depois com `ctx metrics` (ver guia, seção "Ferramentas Nativas de Arquivo").
+mode = "off"
+# Codex só recebe orientação de escrita (apply_patch): ele não tem ferramenta de leitura e lê via shell por design.
+harnesses = ["claude", "codex", "cursor", "gemini", "antigravity"]
+
 [paths]
-# Arquivos que o agente nunca pode ler ou expor
+# Arquivos que o agente nunca pode ler ou expor (entradas sem "/" casam pelo nome em qualquer diretório)
 deny = [
     "~/.ssh",
     "~/.aws",
+    "~/.gnupg",
     ".env",
     "/etc/shadow",
 ]
@@ -57,6 +174,11 @@ deny = [
 protected = [
     "policy.toml",
     "scripts/guardrail.py",
+    ".agents/hooks.json",
+    ".claude/settings.json",
+    ".codex/hooks.json",
+    ".cursor/hooks.json",
+    ".gemini/settings.json",
 ]
 
 # Caminhos do sistema permitidos para leitura segura
@@ -66,8 +188,19 @@ readonly_system = [
     "/proc/meminfo",
 ]
 
+# Diretórios de trabalho do harness (scratchpad, memória e planos): leitura e escrita liberadas
+harness_allow = [
+    "/tmp/claude-{uid}/**",
+    "~/.claude/projects/**",
+    "~/.claude/plans/**",
+]
+
 [toolchains.python]
 canonical_runner = "uv run"
+# Executores locais do .venv do workspace: funcionam mesmo quando a sandbox não monta ~/.local/bin/uv
+sandbox_runners = [".venv/bin/ctx", ".venv/bin/python", ".venv/bin/python3"]
+# Sem uv na máquina, o Python global pode ser usado APENAS para criar o .venv; todo o resto usa .venv/bin/python
+bootstrap_allowed = ["python3 -m venv .venv", "python -m venv .venv"]
 manager = "uv"
 venv_path = ".venv"
 forbidden_direct = [
@@ -75,10 +208,10 @@ forbidden_direct = [
     "python3",
     "/usr/bin/python",
     "/usr/bin/python3",
-    ".venv/bin/python",
-    ".venv/bin/python3",
+    "/usr/local/bin/python",
+    "/usr/local/bin/python3",
 ]
-reason = "Python deve ser executado exclusivamente via 'uv run' usando o .venv local."
+reason = "Python deve ser executado via 'uv run' ou pelo .venv do workspace ('.venv/bin/ctx' / '.venv/bin/python'), nunca pelo python global. Sem uv, o python da máquina serve só para criar o venv: 'python3 -m venv .venv'."
 
 [toolchains.nodejs]
 canonical_runner = "asdf exec"

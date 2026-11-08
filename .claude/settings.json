@@ -2,7 +2,13 @@
   "hooks": {
     "PreToolUse": [
       {
-        "command": "python3 scripts/guardrail.py"
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/scripts/venv-python\" \"$CLAUDE_PROJECT_DIR/scripts/guardrail.py\""
+          }
+        ]
       }
     ]
   }
