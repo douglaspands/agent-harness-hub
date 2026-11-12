@@ -503,3 +503,36 @@ A solução tem três camadas:
 ```
 
 O `ctx metrics` usa o mesmo classificador do guardrail, então "via shell" na métrica é exatamente o que o modo `coach` bloquearia. Ele lê transcripts do Claude Code; para outros harnesses, a medição fica para quando os formatos de transcript forem documentados.
+
+---
+
+## 11. Índice saudável, memória entre sessões, upstream, receitas e avaliação (v0.4)
+
+Tudo configurável em `policy.toml` (seções novas são opcionais: sem elas valem os padrões do código) e nada depende de um projeto específico.
+
+### 11.1 Índice que não trava (`[index]`, `[search]`, `[doctor]`)
+- **Causas do WAL de dezenas de GB, corrigidas:** (a) o índice é consolidado (`PRAGMA wal_checkpoint(TRUNCATE)`) ao fim de cada indexação, com `journal_size_limit` e `wal_autocheckpoint`; (b) `search`, `map` e `status` **não escrevem** mais no índice (abrem `mode=ro`) e não reindexam a cada chamada; (c) binários (byte NUL), arquivos acima de `max_file_kb` (1 MB) e diretórios de build/cache/venv não entram; o `.gitignore` é respeitado.
+- **Busca com teto de tempo:** `ctx search` para em `[search].timeout_s` (3 s; `--timeout`) e devolve o comando `rg` equivalente. Índice atrasado: responde com o que tem e avisa quais arquivos dos resultados mudaram (`refresh = "incremental"` permite atualizar dentro de um orçamento de tempo).
+- **`ctx doctor`** reprova com WAL > `wal_max_mb` (64), banco > `db_max_mb`, índice atrasado em relação aos arquivos/git ou busca de teste > `search_max_ms` (500). **`ctx doctor --fix`** faz checkpoint, VACUUM e reindex (recria do zero se o banco estiver corrompido ou o WAL for gigante). Busca que encontra WAL inchado se autocorrige antes de abrir o banco.
+- **`ctx status`** mostra tamanho (banco + WAL), nº de arquivos, idade e escopo do índice.
+- **Escopo:** `[index.reference] globs = [...]` inclui material fora do git (dumps, documentação extraída) com `kind = reference`; `ctx search --scope code|reference|upstream` filtra. `.patch`/`.diff` são indexados com arquivos tocados, funções/símbolos adicionados e hunks.
+
+### 11.2 Upstream fixado (`[upstream.<projeto>]`)
+`ctx upstream get <projeto> <versão> <caminho>` baixa **uma vez** para `.ctx/upstream/<projeto>/<versão>/<caminho>`, grava o manifesto (URL, sha256, data), indexa e imprime o caminho local; a mesma versão nunca é baixada duas vezes (`--refresh` é explícito). Só https, caminho confinado ao diretório da versão (sem `..` nem symlinks que escapem), tamanho máximo e User-Agent genérico. É a única saída de rede do ctx e só acontece por comando explícito. `ctx upstream list` mostra projetos declarados e cache.
+
+### 11.3 Aprendizado local (`ctx recall`, `ctx fact`)
+- **`ctx recall "<pergunta>"`** consulta os transcripts locais (`[recall].sources`; padrão `~/.claude/projects/<projeto>/*.jsonl`, um parser por harness). O índice é por mensagem e por chamada de ferramenta (comando, resultado truncado, sucesso/erro, data), incremental e sem regex pesada. A pergunta é interpretada (`último`, `que deu certo`, `URL`, `comando`) e há filtros `--tool`, `--since`, `--only-ok`, `--order`.
+- **`ctx fact add "<fato>" --source arquivo:linha|url --tags a,b`** exige fonte verificável e guarda o hash do trecho citado; `ctx fact search` mostra se a fonte mudou; **`ctx fact stale`** lista os fatos cuja fonte mudou ou sumiu depois do registro (URLs são só listadas, sem rede).
+- **Captura ao fim da sessão (opt-in):** com `[recall].capture_on_stop = true`, `ctx rule sync` registra o hook `Stop` do Claude Code (`ctx recall capture --from-hook`). Ele extrai erros e o que os resolveu, comandos bem-sucedidos e URLs usadas como **candidatos**, que só viram fato após `ctx fact review --accept ID...`.
+- **Privacidade:** nada sai da máquina; entradas que tocam `paths.deny` nunca são gravadas (e são filtradas de novo na consulta); padrões de segredo (`[recall].redact`) viram `[REDACTED]`. `.ctx/memory.db` é separado do índice e nunca é apagado por migração ou `doctor --fix` (banco corrompido é preservado como `.corrupt-<data>`).
+
+### 11.4 Receitas (`[recipes.<nome>]`)
+`ctx recipe run <nome> [args]` executa as etapas numa chamada e devolve um resumo. **Todas as etapas passam pelo guardrail antes de qualquer execução**: uma etapa `deny` aborta tudo sem executar nada; `ask`/`defer` exigem `--yes`, e o próprio guardrail pede confirmação do usuário para `ctx recipe run ... --yes` (o agente não se autoaprova). Argumentos entram como um único token (sem shell, sem injeção; valores começando com `-` são recusados). `copy-verify <origem> <destino>` (copiar, sincronizar, conferir sha256) já vem embutida; `ctx recipe list` mostra todas. Quando o agente repete à mão a sequência de uma receita, o guardrail sugere `ctx recipe run <nome>` (sem bloquear).
+
+### 11.5 Medição e avaliação de eficiência
+- **`ctx metrics`** conta, por sessão: buscas do ctx vs desvios para `rg`/`grep`/`sed -n`, uso de recall/fatos/upstream, receitas (e chamadas economizadas), comandos repetidos, re-downloads, bloqueios do guardrail, latência por comando do ctx (de `.ctx/events.jsonl`, só local) e acertos do recall.
+- **`ctx evaluate [--since 30d] [--model haiku] [--json]`** responde "o ctx está compensando?": veredito por recurso (`compensa` / `marginal` / `não compensa` / `sem dados`), ganho líquido estimado **já descontado o custo fixo das instruções** e dos bloqueios, comparação com/sem ctx por modelo (indício, não prova) e recomendação (manter, ajustar ou desligar). Os tokens são **estimativas** (caracteres / 4) e as suposições (`tokens_per_call`, `recall_hit_calls`, limiares) ficam em `[metrics.evaluate]` e são listadas no relatório. Amostra pequena vira `sem dados`: o comando nunca conclui sem evidência.
+- **Por prompt:** `/ctx-avaliar` (Claude Code e Gemini CLI, instalado pelo `ctx upgrade`) ou, em qualquer harness, "avalie a eficiência do ctx" (a regra está nas instruções geradas e na skill).
+
+### 11.6 Atualizar de uma versão anterior
+`ctx upgrade` (veja o `INSTALL.md`): idempotente e não destrutivo; `--dry-run` mostra antes. Policy antiga continua funcionando sem edição (cada chave ausente cai no padrão do código), um guardrail antigo ignora chaves desconhecidas de uma policy nova e o `doctor` avisa quando `scripts/guardrail.py` está numa versão diferente do motor.

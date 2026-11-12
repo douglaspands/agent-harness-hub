@@ -1,0 +1,8 @@
+description = "Avalia se o ctx está compensando (chamadas e tokens economizados vs custo) e recomenda manter, ajustar ou desligar cada recurso"
+prompt = """
+Avalie a eficiência do `ctx` neste projeto para eu decidir se está valendo o esforço.
+
+1. Rode `.venv/bin/ctx evaluate {{args}}` (um comando, sem encadeamento). Se o comando não existir, rode `.venv/bin/ctx upgrade` e repita.
+2. Resuma em português: veredito geral e ganho líquido estimado por sessão (ganho menos o custo das instruções do próprio ctx); veredito por recurso (busca e índice, recall e fatos, upstream em cache, receitas, coaching do guardrail) com a evidência numérica em uma linha cada; quebra por modelo, se houver; e a recomendação (manter, ajustar com o ajuste concreto no policy.toml, ou desligar).
+3. Seja fiel ao relatório: tokens são estimativas (chars/4) e devem ser rotulados assim. Amostra pequena ("sem dados") não permite concluir. Não invente números.
+"""

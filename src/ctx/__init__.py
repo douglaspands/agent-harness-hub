@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # A branch main é a fonte da verdade: instalações e documentos sempre apontam para ela (sem tags).
 REPO_URL = "https://github.com/douglaspands/agent-harness-hub"

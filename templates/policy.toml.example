@@ -234,3 +234,67 @@ policy = "container_first"
 path = "~/data"
 action = "ask"
 reason = "Volumes pesados e bancos de dados devem consultar o usuário para uso de ~/data (No-COW)."
+
+# --- ctx 0.4.0: seções novas (defaults comentados; descomente para customizar) ---
+# ctx:section index
+# [index]
+# Escopo do índice (`ctx index`/`ctx search`). Padrões em código; listas aqui SUBSTITUEM a lista padrão.
+# respect_gitignore = true            # usa `git ls-files`/.gitignore
+# max_file_kb = 1024                  # arquivos maiores não são indexados
+# extra_exclude_dirs = ["generated"]  # somam-se aos diretórios de build/cache/venv já excluídos
+# exclude_globs = ["*.min.js"]
+# journal_size_limit_mb = 8           # teto do arquivo -wal após cada checkpoint
+# wal_autocheckpoint_pages = 200
+#
+# [index.reference]                   # material fora do git que vale buscar (dumps, documentação extraída)
+# globs = ["reference/**/*.txt"]      # relativos à raiz do projeto (ou absolutos / com ~)
+# max_file_kb = 4096
+
+# ctx:section search
+# [search]
+# timeout_s = 3.0                     # nenhuma busca passa disso; ao estourar devolve o `rg` equivalente
+# refresh = "off"                     # "off": a busca nunca escreve no índice | "incremental": atualiza com orçamento
+# refresh_budget_ms = 300
+
+# ctx:section doctor
+# [doctor]
+# wal_max_mb = 64                     # WAL acima disso reprova o `ctx doctor` (`--fix` consolida)
+# db_max_mb = 512
+# search_max_ms = 500                 # uma busca de teste mais lenta que isso reprova
+# stale_check = true                  # reprova se o índice estiver atrasado em relação aos arquivos/git
+
+# ctx:section upstream
+# Fontes upstream fixadas: `ctx upstream get <projeto> <versão> <caminho>` baixa UMA vez
+# para .ctx/upstream/<projeto>/<versão>/<caminho> e indexa. Declare os projetos aqui (https apenas):
+# [upstream.meu-projeto]
+# base_url = "https://raw.githubusercontent.com/org/repo/{version}/{path}"   # {version} e {path} obrigatórios
+# [upstream.meu-projeto.versions]     # opcional: URL base própria por versão (mesmos placeholders)
+# v1 = "https://mirror.exemplo.org/repo/v1/{path}"
+
+# ctx:section recall
+# Memória local entre sessões (`ctx recall`, `ctx fact`). Nada sai da máquina; `paths.deny` é respeitado.
+# [recall]
+# sources = [{ harness = "claude", path = "~/.claude/projects/{project}/*.jsonl" }]   # {project} = raiz do projeto normalizada
+# capture_on_stop = false             # true: hook de parada gera candidatos a fato para `ctx fact review`
+# redact = ["(?i)(api[_-]?key|token|secret|password)\\s*[=:]\\s*\\S+"]
+
+# ctx:section recipes
+# Receitas de várias etapas (`ctx recipe run <nome> [args]`). Cada etapa passa pelo guardrail; `deny` aborta.
+# `copy-verify <origem> <destino>` já vem embutida (copiar, sincronizar, conferir sha256); redefina-a aqui se precisar.
+# [recipes.minha-receita]
+# description = "o que a receita faz"
+# params = ["alvo"]
+# steps = ["git status -s -b", "rg -n {alvo} src"]
+
+# ctx:section metrics
+# [metrics]
+# events_log = true                   # .ctx/events.jsonl: latência por comando, receitas e recall (só local)
+# events_max_kb = 1024
+#
+# [metrics.evaluate]                  # limiares e SUPOSIÇÕES de `ctx evaluate` (tokens são estimativas chars/4)
+# min_sessions = 5                    # abaixo disso o veredito é "sem dados"
+# min_group_sessions = 3              # mínimo por grupo (com/sem ctx) para comparar por modelo
+# min_net_saving_tokens = 2000        # ganho líquido estimado por sessão para "compensa"
+# tokens_per_call = 250               # custo médio de uma chamada de ferramenta evitada
+# recall_hit_calls = 2                # chamadas que um acerto de recall/fato costuma evitar
+# search_adoption_ok = 0.5            # fração de buscas via ctx (vs rg/grep/sed) para "compensa"
