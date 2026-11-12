@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from ctx import __version__
 from ctx.policy import doctor, load_policy, resolve_binaries, sync_rules, validate_claude_hooks
 
 
@@ -43,7 +44,7 @@ forbidden_direct = ["python3"]
         # Mock de guardrail
         scripts_dir = self.workspace / "scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
-        (scripts_dir / "guardrail.py").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        (scripts_dir / "guardrail.py").write_text(f'#!/usr/bin/env python3\nKIT_VERSION = "{__version__}"\n', encoding="utf-8")
         venv_python = scripts_dir / "venv-python"
         venv_python.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
         venv_python.chmod(0o755)

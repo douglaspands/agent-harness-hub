@@ -11,8 +11,12 @@ Zero dependências externas (100% biblioteca padrão: sqlite3, ast, json, pathli
 from __future__ import annotations
 
 import ast
+import fnmatch
+import glob as globlib
 import json
+import os
 import re
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -22,10 +26,17 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from ctx import WORKSPACE_ROOT
+from ctx.config import DEFAULTS, is_denied, load_config, load_raw_policy
 
 ARCHIVE_PREFIX = "openspec/changes/archive/"
 MAP_PRIORITY = ("src/", "scripts/", "tests/", "openspec/changes/")
 DEFAULT_PREVIEW_LINES = 25
+
+# Esquema do índice. O índice é cache reconstruível: versão diferente => recriado e reindexado (ver get_db).
+SCHEMA_VERSION = 2
+KINDS = ("code", "reference", "upstream")
+# WAL acima disso não vale a pena consolidar na hora de uma busca: o índice é recriado do zero.
+WAL_REBUILD_BYTES = 1024 * 1024 * 1024
 
 IGNORED_DIRS = {
     ".git",
@@ -83,25 +94,58 @@ def db_path_for(workspace_root: Path) -> Path:
     return workspace_root / ".ctx" / "index.db"
 
 
-def get_db(db_path: Path | None = None) -> sqlite3.Connection:
-    """Abre conexão com o banco SQLite em modo WAL e cria as tabelas necessárias."""
-    db_path = db_path or db_path_for(WORKSPACE_ROOT)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(db_path))
+def db_files(db_path: Path) -> list[Path]:
+    return [db_path, db_path.with_name(db_path.name + "-wal"), db_path.with_name(db_path.name + "-shm")]
+
+
+def wal_bytes(db_path: Path) -> int:
+    try:
+        return db_path.with_name(db_path.name + "-wal").stat().st_size
+    except OSError:
+        return 0
+
+
+def remove_db(db_path: Path) -> None:
+    """Apaga o índice (cache reconstruível) com seu WAL/SHM."""
+    for f in db_files(db_path):
+        try:
+            f.unlink()
+        except OSError:
+            pass
+
+
+def _apply_pragmas(con: sqlite3.Connection, idx_cfg: dict[str, Any]) -> None:
+    # journal_size_limit trunca o -wal após cada checkpoint; autocheckpoint impede o crescimento sem fim.
+    con.execute(f"PRAGMA busy_timeout={int(idx_cfg['busy_timeout_ms'])};")
     con.execute("PRAGMA journal_mode=WAL;")
     con.execute("PRAGMA synchronous=NORMAL;")
+    con.execute(f"PRAGMA journal_size_limit={int(idx_cfg['journal_size_limit_mb']) * 1024 * 1024};")
+    con.execute(f"PRAGMA wal_autocheckpoint={int(idx_cfg['wal_autocheckpoint_pages'])};")
 
+
+def _create_schema(con: sqlite3.Connection) -> bool:
+    """Cria/migra o esquema. Retorna True se o índice foi recriado (versão anterior ou desconhecida)."""
+    version = con.execute("PRAGMA user_version").fetchone()[0]
+    rebuilt = False
+    if version != SCHEMA_VERSION:
+        has_old = con.execute("SELECT 1 FROM sqlite_master WHERE name IN ('chunks','indexed_files') LIMIT 1").fetchone()
+        # Índice da versão anterior: o FTS5 ganhou a coluna `kind`, então recria (reindex automático depois).
+        con.execute("DROP TABLE IF EXISTS chunks")
+        con.execute("DROP TABLE IF EXISTS indexed_files")
+        con.execute("DROP TABLE IF EXISTS meta")
+        rebuilt = bool(has_old)
     con.execute(
         """
         CREATE TABLE IF NOT EXISTS indexed_files (
             path TEXT PRIMARY KEY,
             mtime_ns INTEGER,
             size INTEGER,
-            hash TEXT
+            hash TEXT,
+            kind TEXT NOT NULL DEFAULT 'code'
         );
         """
     )
-
+    con.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
     con.execute(
         """
         CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
@@ -111,11 +155,76 @@ def get_db(db_path: Path | None = None) -> sqlite3.Connection:
             start_line UNINDEXED,
             end_line UNINDEXED,
             content,
+            kind UNINDEXED,
             tokenize='unicode61 remove_diacritics 2'
         );
         """
     )
-    return con
+    if version != SCHEMA_VERSION:
+        con.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        con.commit()
+    return rebuilt
+
+
+def get_db(db_path: Path | None = None, idx_cfg: dict[str, Any] | None = None) -> sqlite3.Connection:
+    """Abre (leitura/escrita) o índice em modo WAL, migrando o esquema se necessário.
+
+    Banco corrompido ou ilegível é apagado e recriado: o índice é cache, nunca fonte de verdade.
+    """
+    db_path = db_path or db_path_for(WORKSPACE_ROOT)
+    idx_cfg = {**DEFAULTS["index"], **(idx_cfg or {})}
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    for attempt in (1, 2):
+        con = sqlite3.connect(str(db_path), timeout=idx_cfg["busy_timeout_ms"] / 1000)
+        try:
+            _apply_pragmas(con, idx_cfg)
+            _create_schema(con)
+            return con
+        except sqlite3.DatabaseError:
+            con.close()
+            if attempt == 2:
+                raise
+            remove_db(db_path)
+    raise AssertionError("inalcançável")  # pragma: no cover
+
+
+def open_readonly(db_path: Path) -> sqlite3.Connection:
+    """Conexão somente leitura (`mode=ro`): buscas nunca escrevem no índice."""
+    uri = "file:" + db_path.as_posix().replace("?", "%3f").replace("#", "%23") + "?mode=ro"
+    return sqlite3.connect(uri, uri=True, timeout=DEFAULTS["index"]["busy_timeout_ms"] / 1000)
+
+
+def index_state(db_path: Path) -> str:
+    """'missing' | 'outdated' (esquema anterior) | 'ok' | 'broken'."""
+    if not db_path.exists():
+        return "missing"
+    try:
+        con = open_readonly(db_path)
+        try:
+            version = con.execute("PRAGMA user_version").fetchone()[0]
+            if version != SCHEMA_VERSION:
+                return "outdated"
+            con.execute("SELECT 1 FROM chunks LIMIT 1").fetchall()
+            return "ok"
+        finally:
+            con.close()
+    except sqlite3.DatabaseError:
+        return "broken"
+
+
+def checkpoint(db_path: Path) -> dict[str, int]:
+    """Consolida o WAL no banco (TRUNCATE). Retorna os tamanhos do -wal antes e depois."""
+    before = wal_bytes(db_path)
+    if db_path.exists():
+        try:
+            con = sqlite3.connect(str(db_path), timeout=2)
+            try:
+                con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+            finally:
+                con.close()
+        except sqlite3.DatabaseError:
+            pass
+    return {"before": before, "after": wal_bytes(db_path)}
 
 
 def extract_python_chunks(file_path: Path, rel_path: str, content: str) -> list[Chunk]:
@@ -295,36 +404,264 @@ def extract_generic_chunks(file_path: Path, rel_path: str, content: str) -> list
     return chunks
 
 
-def chunk_file(file_path: Path, workspace_root: Path) -> list[Chunk]:
+HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@\s*(.*)$")
+SYMBOL_RES = (
+    re.compile(r"^\+\s*(?:async\s+)?def\s+(\w+)"),
+    re.compile(r"^\+\s*class\s+(\w+)"),
+    re.compile(r"^\+\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)"),
+    re.compile(r"^\+\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)"),
+    re.compile(r"^\+\s*func\s+(?:\([^)]*\)\s*)?(\w+)"),
+    re.compile(r"^\+\s*#\s*define\s+(\w+)"),
+    # C/C++/Java-like: tipo nome(args) {   (palavras de controle filtradas abaixo)
+    re.compile(r"^\+[A-Za-z_][\w\s\*:<>,]*?\b(\w+)\s*\([^;]*\)\s*(?:const\s*)?\{?\s*$"),
+)
+NOT_SYMBOLS = {"if", "for", "while", "switch", "return", "else", "sizeof", "catch", "do"}
+PATCH_HUNK_CHARS = 4000
+
+
+def extract_patch_chunks(file_path: Path, rel_path: str, content: str) -> list[Chunk]:
+    """Patches (.patch/.diff): um resumo (arquivos tocados, símbolos adicionados, hunks) + um chunk por hunk."""
+    lines = content.splitlines()
+    files: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    subject = next((ln[len("Subject:") :].strip() for ln in lines[:80] if ln.startswith("Subject:")), "")
+
+    for i, line in enumerate(lines, start=1):
+        if line.startswith("diff --git "):
+            parts = line.split()
+            name = parts[3][2:] if len(parts) >= 4 and parts[3].startswith("b/") else parts[-1]
+            current = {"path": name, "hunks": [], "symbols": []}
+            files.append(current)
+        elif line.startswith("+++ "):
+            name = line[4:].split("\t")[0].strip()
+            if name != "/dev/null":
+                name = name[2:] if name.startswith("b/") else name
+                if current is None or (current["hunks"] and current["path"] != name):
+                    current = {"path": name, "hunks": [], "symbols": []}
+                    files.append(current)
+                else:
+                    current["path"] = name
+        elif current is not None:
+            m = HUNK_RE.match(line)
+            if m:
+                current["hunks"].append({"start": i, "end": i, "new": f"{m.group(3)},{m.group(4) or 1}", "ctx": m.group(5).strip()})
+                continue
+            if current["hunks"]:
+                current["hunks"][-1]["end"] = i
+            if line.startswith("+") and not line.startswith("+++"):
+                for rx in SYMBOL_RES:
+                    sm = rx.match(line)
+                    if sm and sm.group(1) not in NOT_SYMBOLS:
+                        if sm.group(1) not in current["symbols"]:
+                            current["symbols"].append(sm.group(1))
+                        break
+
+    if not files:
+        return extract_generic_chunks(file_path, rel_path, content)
+
+    touched = [f["path"] for f in files]
+    symbols = sorted({s for f in files for s in f["symbols"]})
+    hunk_count = sum(len(f["hunks"]) for f in files)
+    summary = [f"patch: {file_path.name}"]
+    if subject:
+        summary.append(f"subject: {subject}")
+    summary.append(f"files touched ({len(touched)}): " + ", ".join(touched))
+    summary.append(f"symbols added ({len(symbols)}): " + ", ".join(symbols))
+    summary.append(f"hunks: {hunk_count}")
+    chunks = [
+        Chunk(rel_path, f"patch summary: {file_path.name}", "patch_summary", 1, min(len(lines), 30), "\n".join(summary))
+    ]
+    for f in files:
+        for h in f["hunks"]:
+            body = "\n".join(lines[h["start"] - 1 : h["end"]])[:PATCH_HUNK_CHARS]
+            meta = f"file: {f['path']}\nnew range: {h['new']}\ncontext: {h['ctx']}\nsymbols added: {', '.join(f['symbols'])}\n"
+            chunks.append(
+                Chunk(rel_path, f"hunk {f['path']} @@ {h['ctx'] or h['new']}", "patch_hunk", h["start"], h["end"], meta + body)
+            )
+    return chunks
+
+
+def chunk_file(file_path: Path, workspace_root: Path, rel_path: str | None = None) -> list[Chunk]:
     """Identifica o parser correto e divide o arquivo em blocos."""
-    rel_path = str(file_path.relative_to(workspace_root))
+    if rel_path is None:
+        rel_path = str(file_path.relative_to(workspace_root))
     try:
         content = file_path.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return []
 
-    if file_path.suffix == ".py":
+    suffix = file_path.suffix.lower()
+    if suffix == ".py":
         return extract_python_chunks(file_path, rel_path, content)
-    elif file_path.suffix in {".md", ".markdown"}:
+    elif suffix in {".md", ".markdown"}:
         return extract_markdown_chunks(file_path, rel_path, content)
+    elif suffix in {".patch", ".diff"}:
+        return extract_patch_chunks(file_path, rel_path, content)
     else:
         return extract_generic_chunks(file_path, rel_path, content)
 
 
-def collect_indexable_files(workspace_root: Path) -> Iterator[Path]:
-    """Varre o repositório ignorando diretórios e extensões irrelevantes."""
-    for root, dirs, files in os_walk_filtered(workspace_root):
+def is_binary_file(path: Path, sniff_bytes: int) -> bool:
+    """Binário = byte NUL nos primeiros `sniff_bytes` bytes (ou arquivo ilegível)."""
+    try:
+        with open(path, "rb") as f:
+            return b"\x00" in f.read(sniff_bytes)
+    except OSError:
+        return True
+
+
+def _parse_gitignore(root: Path) -> list[tuple[str, bool, bool]]:
+    """Parser mínimo do .gitignore da raiz (fallback quando não há git): (padrão, só_diretório, ancorado)."""
+    rules: list[tuple[str, bool, bool]] = []
+    try:
+        text = (root / ".gitignore").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return rules
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", "!")):
+            continue
+        dir_only = line.endswith("/")
+        line = line.rstrip("/")
+        anchored = line.startswith("/") or "/" in line
+        rules.append((line.lstrip("/"), dir_only, anchored))
+    return rules
+
+
+def _gitignored(rel: str, is_dir: bool, rules: list[tuple[str, bool, bool]]) -> bool:
+    name = rel.rsplit("/", 1)[-1]
+    for pattern, dir_only, anchored in rules:
+        if dir_only and not is_dir:
+            continue
+        if anchored:
+            if fnmatch.fnmatch(rel, pattern):
+                return True
+        elif fnmatch.fnmatch(name, pattern):
+            return True
+    return False
+
+
+def _git_listed_files(workspace_root: Path) -> list[str] | None:
+    """Arquivos rastreados + não rastreados não ignorados (respeita .gitignore). None se não houver git."""
+    git = shutil.which("git")
+    if not git or not (workspace_root / ".git").exists():
+        return None
+    try:
+        out = subprocess.run(
+            [git, "-C", str(workspace_root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return [p for p in out.stdout.decode("utf-8", errors="replace").split("\0") if p]
+
+
+def _path_excluded(rel: str, idx_cfg: dict[str, Any]) -> bool:
+    """Exclusões por diretório, extensão, glob e arquivos ocultos (mesma regra nos dois modos de coleta)."""
+    parts = rel.split("/")
+    excluded_dirs = set(idx_cfg["exclude_dirs"])
+    excluded_dirs |= set(idx_cfg.get("extra_exclude_dirs", []))
+    for d in parts[:-1]:
+        if d in excluded_dirs or d.startswith(".") or d.endswith(".egg-info"):
+            return True
+    name = parts[-1]
+    if name.startswith(".") and name not in {".gitignore", ".gitmodules"}:
+        return True
+    if Path(name).suffix.lower() in set(idx_cfg["exclude_extensions"]):
+        return True
+    return any(fnmatch.fnmatch(rel, g) or fnmatch.fnmatch(name, g) for g in idx_cfg["exclude_globs"])
+
+
+def _walk_files(workspace_root: Path, idx_cfg: dict[str, Any]) -> Iterator[str]:
+    rules = _parse_gitignore(workspace_root) if idx_cfg["respect_gitignore"] else []
+    for root, _dirs, files in os_walk_filtered(workspace_root, idx_cfg, rules):
+        rel_dir = "" if root == workspace_root else root.relative_to(workspace_root).as_posix() + "/"
         for f in files:
-            p = root / f
-            if p.suffix.lower() in IGNORED_EXTENSIONS:
+            rel = rel_dir + f
+            if rules and _gitignored(rel, False, rules):
                 continue
-            if f.startswith(".") and f not in {".gitignore", ".gitmodules"}:
-                continue
-            yield p
+            yield rel
 
 
-def os_walk_filtered(root_dir: Path) -> Iterator[tuple[Path, list[str], list[str]]]:
-    """Percorre os diretórios filtrando pastas ignoradas na descida para alta velocidade."""
+def collect_files(
+    workspace_root: Path, config: dict[str, Any] | None = None, policy: dict[str, Any] | None = None
+) -> list[tuple[Path, str, str]]:
+    """Arquivos a indexar: [(caminho, caminho_relativo, kind)] respeitando o escopo configurado.
+
+    Exclui: ignorados pelo git, diretórios de build/cache/venv, extensões binárias, arquivos acima de
+    `max_file_kb`, binários (byte NUL) e caminhos negados por `paths.deny`. A allowlist `[index.reference]`
+    adiciona material fora do git (kind='reference').
+    """
+    config = config or load_config(workspace_root)
+    policy = policy if policy is not None else load_raw_policy(workspace_root)
+    idx = config["index"]
+    max_bytes = int(idx["max_file_kb"]) * 1024
+    sniff = int(idx["binary_sniff_bytes"])
+
+    listed = _git_listed_files(workspace_root) if idx["respect_gitignore"] else None
+    candidates = listed if listed is not None else list(_walk_files(workspace_root, idx))
+
+    out: list[tuple[Path, str, str]] = []
+    seen: set[str] = set()
+    for rel in candidates:
+        if rel in seen or _path_excluded(rel, idx):
+            continue
+        p = workspace_root / rel
+        try:
+            if not p.is_file() or p.stat().st_size > max_bytes:
+                continue
+        except OSError:
+            continue
+        if is_denied(p, policy, workspace_root) or is_binary_file(p, sniff):
+            continue
+        seen.add(rel)
+        out.append((p, rel, "code"))
+
+    ref = idx.get("reference", {})
+    ref_max = int(ref.get("max_file_kb", idx["max_file_kb"])) * 1024
+    for pattern in ref.get("globs", []):
+        expanded = os.path.expanduser(pattern)
+        pat = expanded if os.path.isabs(expanded) else str(workspace_root / expanded)
+        for match in sorted(globlib.glob(pat, recursive=True)):
+            p = Path(match)
+            if not p.is_file():
+                continue
+            try:
+                rel = p.resolve().relative_to(workspace_root.resolve()).as_posix()
+            except ValueError:
+                rel = str(p.resolve())
+            try:
+                if rel in seen or p.stat().st_size > ref_max:
+                    continue
+            except OSError:
+                continue
+            if is_denied(p, policy, workspace_root) or is_binary_file(p, sniff):
+                continue
+            seen.add(rel)
+            out.append((p, rel, "reference"))
+    return out
+
+
+def collect_indexable_files(workspace_root: Path) -> Iterator[Path]:
+    """Compatibilidade: caminhos dos arquivos de código indexáveis (ver collect_files)."""
+    for path, _rel, kind in collect_files(workspace_root):
+        if kind == "code":
+            yield path
+
+
+def os_walk_filtered(
+    root_dir: Path,
+    idx_cfg: dict[str, Any] | None = None,
+    gitignore_rules: list[tuple[str, bool, bool]] | None = None,
+) -> Iterator[tuple[Path, list[str], list[str]]]:
+    """Percorre os diretórios podando pastas excluídas na descida (rápido, sem entrar em venv/build/.git)."""
+    idx_cfg = idx_cfg or DEFAULTS["index"]
+    excluded = set(idx_cfg["exclude_dirs"]) | set(idx_cfg.get("extra_exclude_dirs", []))
+    rules = gitignore_rules or []
     stack = [root_dir]
     while stack:
         curr = stack.pop()
@@ -338,78 +675,107 @@ def os_walk_filtered(root_dir: Path) -> Iterator[tuple[Path, list[str], list[str
         for e in entries:
             name = e.name
             if e.is_dir():
-                if name not in IGNORED_DIRS and not name.startswith(".") and not name.endswith(".egg-info"):
-                    dirs.append(name)
-                    stack.append(e)
+                if name in excluded or name.startswith(".") or name.endswith(".egg-info"):
+                    continue
+                if rules and _gitignored((e.relative_to(root_dir)).as_posix(), True, rules):
+                    continue
+                dirs.append(name)
+                stack.append(e)
             elif e.is_file():
                 files.append(name)
         yield curr, dirs, files
 
 
-def index_workspace(workspace_root: Path = WORKSPACE_ROOT, force: bool = False) -> dict[str, Any]:
-    """Indexa incrementalmente o repositório em SQLite FTS5."""
+def _store_file(con: sqlite3.Connection, path: Path, workspace_root: Path, rel: str, kind: str, st: os.stat_result) -> None:
+    chunks = chunk_file(path, workspace_root, rel_path=rel)
+    con.execute("DELETE FROM chunks WHERE path = ?", (rel,))
+    con.executemany(
+        "INSERT INTO chunks (path, title, chunk_type, start_line, end_line, content, kind) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [(c.path, c.title, c.chunk_type, c.start_line, c.end_line, c.content, kind) for c in chunks],
+    )
+    con.execute(
+        "INSERT OR REPLACE INTO indexed_files (path, mtime_ns, size, hash, kind) VALUES (?, ?, ?, ?, ?)",
+        (rel, st.st_mtime_ns, st.st_size, "", kind),
+    )
+
+
+def index_workspace(
+    workspace_root: Path = WORKSPACE_ROOT, force: bool = False, budget_ms: float | None = None
+) -> dict[str, Any]:
+    """Indexa incrementalmente o repositório em SQLite FTS5 e consolida o WAL ao final.
+
+    `budget_ms` limita o tempo de gravação (atualização incremental de busca): ao estourar, grava o que
+    já processou e devolve `partial=True`. Arquivos do kind 'upstream' nunca são removidos aqui.
+    """
     start_t = time.perf_counter()
-    con = get_db(db_path_for(workspace_root))
+    config = load_config(workspace_root)
+    policy = load_raw_policy(workspace_root)
+    db_path = db_path_for(workspace_root)
+    con = get_db(db_path, config["index"])
+    indexed_count = skipped_count = 0
+    partial = False
+    try:
+        cached_meta = {
+            row[0]: (row[1], row[2], row[3]) for row in con.execute("SELECT path, mtime_ns, size, kind FROM indexed_files")
+        }
+        current = collect_files(workspace_root, config, policy)
+        seen: set[str] = set()
+        deadline = start_t + budget_ms / 1000 if budget_ms else None
 
-    existing_rows = con.execute("SELECT path, mtime_ns, size FROM indexed_files").fetchall()
-    cached_meta = {row[0]: (row[1], row[2]) for row in existing_rows}
-
-    current_files = list(collect_indexable_files(workspace_root))
-    seen_rel_paths: set[str] = set()
-
-    indexed_count = 0
-    skipped_count = 0
-
-    with con:
-        for file_path in current_files:
-            rel_path = str(file_path.relative_to(workspace_root))
-            seen_rel_paths.add(rel_path)
-
-            stat = file_path.stat()
-            mtime_ns = stat.st_mtime_ns
-            size = stat.st_size
-
-            if not force and rel_path in cached_meta:
-                cached_mtime, cached_size = cached_meta[rel_path]
-                if cached_mtime == mtime_ns and cached_size == size:
+        with con:
+            for path, rel, kind in current:
+                seen.add(rel)
+                try:
+                    st = path.stat()
+                except OSError:
+                    continue
+                cached = cached_meta.get(rel)
+                if not force and cached and cached[0] == st.st_mtime_ns and cached[1] == st.st_size and cached[2] == kind:
                     skipped_count += 1
                     continue
+                if deadline and time.perf_counter() > deadline:
+                    partial = True
+                    continue
+                _store_file(con, path, workspace_root, rel, kind, st)
+                indexed_count += 1
 
-            chunks = chunk_file(file_path, workspace_root)
-            con.execute("DELETE FROM chunks WHERE path = ?", (rel_path,))
-            for c in chunks:
-                con.execute(
-                    """
-                    INSERT INTO chunks (path, title, chunk_type, start_line, end_line, content)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (c.path, c.title, c.chunk_type, c.start_line, c.end_line, c.content),
-                )
-
-            con.execute(
-                """
-                INSERT OR REPLACE INTO indexed_files (path, mtime_ns, size, hash)
-                VALUES (?, ?, ?, ?)
-                """,
-                (rel_path, mtime_ns, size, ""),
-            )
-            indexed_count += 1
-
-        # Remover arquivos deletados
-        for cached_path in cached_meta:
-            if cached_path not in seen_rel_paths:
-                con.execute("DELETE FROM chunks WHERE path = ?", (cached_path,))
-                con.execute("DELETE FROM indexed_files WHERE path = ?", (cached_path,))
-
-    con.close()
+            if not partial:
+                for cached_path, (_m, _s, cached_kind) in cached_meta.items():
+                    if cached_path not in seen and cached_kind != "upstream":
+                        con.execute("DELETE FROM chunks WHERE path = ?", (cached_path,))
+                        con.execute("DELETE FROM indexed_files WHERE path = ?", (cached_path,))
+                con.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('indexed_at', ?)", (str(time.time()),))
+    finally:
+        con.close()
+    # Consolida o WAL (journal_size_limit então o trunca): o índice nunca deve deixar um -wal gigante para trás.
+    wal = checkpoint(db_path)
     elapsed_ms = (time.perf_counter() - start_t) * 1000
 
     return {
         "indexed": indexed_count,
         "skipped": skipped_count,
-        "total": len(seen_rel_paths),
+        "total": len(seen),
+        "partial": partial,
+        "wal_bytes": wal["after"],
         "elapsed_ms": round(elapsed_ms, 2),
     }
+
+
+def index_extra_file(workspace_root: Path, path: Path, kind: str = "upstream") -> str:
+    """Indexa um arquivo fora do escopo normal (ex.: fonte upstream em .ctx/upstream). Retorna o caminho relativo."""
+    try:
+        rel = path.resolve().relative_to(workspace_root.resolve()).as_posix()
+    except ValueError:
+        rel = str(path.resolve())
+    config = load_config(workspace_root)
+    con = get_db(db_path_for(workspace_root), config["index"])
+    try:
+        with con:
+            _store_file(con, path, workspace_root, rel, kind, path.stat())
+    finally:
+        con.close()
+    checkpoint(db_path_for(workspace_root))
+    return rel
 
 
 def sanitize_query(query: str) -> str:
@@ -451,6 +817,83 @@ def read_preview(workspace_root: Path, rel_path: str, start: int, end: int, max_
     return "\n".join(f"{n:>{width}}  {lines[n - 1]}" for n in range(int(start), stop + 1))
 
 
+def rg_equivalent(query: str, path_prefix: str | None = None) -> str:
+    """Comando `rg` aproximadamente equivalente à query (fallback quando a busca estoura o tempo)."""
+    parts = ["rg", "-n", "--heading", "-C", "2"]
+    for term in re.findall(r"[\wÀ-ſ]+", query):
+        parts += ["-e", term]
+    prefix = normalize_subpath(path_prefix or "")
+    if prefix:
+        parts.append(prefix)
+    return " ".join(shlex.quote(p) for p in parts)
+
+
+def _kinds_for_scope(scope: str) -> list[str] | None:
+    if scope in ("", "all", None):
+        return None
+    if scope not in KINDS:
+        raise ValueError(f"scope inválido '{scope}' (use: all, {', '.join(KINDS)})")
+    return [scope]
+
+
+def repair_bloat(workspace_root: Path, config: dict[str, Any]) -> list[str]:
+    """WAL inchado: consolida (checkpoint) ou, se gigante, descarta o índice (cache) para recriá-lo. Retorna avisos.
+
+    Roda ANTES de abrir o banco: abrir um índice com dezenas de GB de WAL já seria o travamento.
+    """
+    db = db_path_for(workspace_root)
+    wal = wal_bytes(db)
+    if wal > WAL_REBUILD_BYTES:
+        remove_db(db)
+        return [f"WAL de {wal // (1024 * 1024)} MB descartado: índice recriado (rode `ctx doctor`)"]
+    if wal > int(config["doctor"]["wal_max_mb"]) * 1024 * 1024:
+        checkpoint(db)
+        return [f"WAL de {wal // (1024 * 1024)} MB consolidado"]
+    return []
+
+
+def ensure_current(workspace_root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    """Prepara o índice para leitura SEM escrever conteúdo na busca comum.
+
+    Só escreve quando é indispensável: índice ausente/de versão anterior/corrompido (reindexa), WAL inchado
+    (consolida ou recria) ou, se `[search].refresh = "incremental"`, uma atualização com orçamento de tempo.
+    """
+    db = db_path_for(workspace_root)
+    info: dict[str, Any] = {"reindexed": False, "repaired": False, "warnings": []}
+    info["warnings"] += repair_bloat(workspace_root, config)
+    info["repaired"] = bool(info["warnings"])
+    state = index_state(db)
+    if state != "ok":
+        if state == "broken":
+            remove_db(db)
+        res = index_workspace(workspace_root)
+        info["reindexed"] = True
+        info["warnings"].append(
+            f"índice {'criado' if state == 'missing' else 'recriado (versão anterior/corrompido)'}: {res['total']} arquivos em {res['elapsed_ms']}ms"
+        )
+    elif config["search"]["refresh"] == "incremental":
+        res = index_workspace(workspace_root, budget_ms=float(config["search"]["refresh_budget_ms"]))
+        info["reindexed"] = res["indexed"] > 0
+        if res["partial"]:
+            info["warnings"].append("atualização incremental parcial (orçamento de tempo); rode `ctx index`")
+    return info
+
+
+def _stale_results(con: sqlite3.Connection, workspace_root: Path, paths: set[str]) -> list[str]:
+    """Arquivos presentes nos resultados que mudaram desde a indexação (checagem barata: só o que foi retornado)."""
+    stale: list[str] = []
+    for path in sorted(paths):
+        row = con.execute("SELECT mtime_ns, size FROM indexed_files WHERE path = ?", (path,)).fetchone()
+        try:
+            st = (workspace_root / path).stat()
+        except OSError:
+            stale.append(path)
+            continue
+        if row and (row[0] != st.st_mtime_ns or row[1] != st.st_size):
+            stale.append(path)
+    return stale
+
+
 def _search_one(
     con: sqlite3.Connection,
     workspace_root: Path,
@@ -459,16 +902,21 @@ def _search_one(
     path_prefix: str | None,
     lines: int,
     file_cache: dict[str, list[str]],
+    kinds: list[str] | None = None,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     start_t = time.perf_counter()
     sanitized = sanitize_query(query)
     results: list[dict[str, Any]] = []
+    timed_out = False
 
-    if sanitized:
+    if deadline is not None and start_t >= deadline:
+        timed_out = True
+    elif sanitized:
         sql = """
             SELECT path, title, chunk_type, start_line, end_line,
                    snippet(chunks, 5, '>>> ', ' <<<', '...', 25) AS snip,
-                   bm25(chunks) AS rank
+                   bm25(chunks) AS rank, kind
             FROM chunks
             WHERE chunks MATCH ?
         """
@@ -478,10 +926,16 @@ def _search_one(
             sql += " AND (path = ? OR path LIKE ? ESCAPE '\\')"
             escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             params += [prefix, escaped + "/%"]
+        if kinds:
+            sql += f" AND kind IN ({','.join('?' * len(kinds))})"
+            params += kinds
         sql += " ORDER BY rank LIMIT ?"
         params.append(top_k)
         try:
             for row in con.execute(sql, params).fetchall():
+                if deadline is not None and time.perf_counter() > deadline:
+                    timed_out = True
+                    break
                 results.append(
                     {
                         "path": row[0],
@@ -493,17 +947,23 @@ def _search_one(
                         "snippet": row[5].strip(),
                         "preview": read_preview(workspace_root, row[0], row[3], row[4], lines, file_cache),
                         "score": round(float(row[6]), 3),
+                        "kind": row[7],
                     }
                 )
         except sqlite3.OperationalError:
-            pass
+            # "interrupted" = o progress handler estourou o prazo; qualquer outro erro = query sem resultado
+            timed_out = deadline is not None and time.perf_counter() >= deadline
 
-    return {
+    out = {
         "query": query,
         "results": results,
         "count": len(results),
+        "timed_out": timed_out,
         "elapsed_ms": round((time.perf_counter() - start_t) * 1000, 2),
     }
+    if timed_out:
+        out["rg"] = rg_equivalent(query, path_prefix)
+    return out
 
 
 def search_many(
@@ -512,19 +972,49 @@ def search_many(
     workspace_root: Path = WORKSPACE_ROOT,
     path_prefix: str | None = None,
     lines: int = DEFAULT_PREVIEW_LINES,
+    timeout: float | None = None,
+    scope: str = "all",
 ) -> dict[str, Any]:
-    """Busca multi-query One-Shot rankeada por BM25, com preview de `lines` linhas por resultado."""
-    index_workspace(workspace_root=workspace_root, force=False)
+    """Busca multi-query One-Shot rankeada por BM25, com preview de `lines` linhas por resultado.
+
+    Somente leitura (exceto reparo/primeira indexação, ver ensure_current). Nenhuma busca passa de `timeout`
+    segundos (padrão `[search].timeout_s`): ao estourar, devolve o que tem e o comando `rg` equivalente.
+    """
     start_t = time.perf_counter()
-    con = get_db(db_path_for(workspace_root))
+    config = load_config(workspace_root)
+    timeout = float(config["search"]["timeout_s"] if timeout is None else timeout)
+    kinds = _kinds_for_scope(scope)
+    info = ensure_current(workspace_root, config)
+    # O prazo vale para a busca em si; a (rara) indexação inicial/reparo de ensure_current não consome o orçamento.
+    deadline = time.perf_counter() + timeout
+
+    con = open_readonly(db_path_for(workspace_root))
     file_cache: dict[str, list[str]] = {}
+    con.set_progress_handler(lambda: 1 if time.perf_counter() > deadline else 0, 10000)
+    warnings = list(info["warnings"])
     try:
-        per_query = [_search_one(con, workspace_root, q, top_k, path_prefix, lines, file_cache) for q in queries]
+        per_query = [
+            _search_one(con, workspace_root, q, top_k, path_prefix, lines, file_cache, kinds, deadline) for q in queries
+        ]
+        con.set_progress_handler(None, 0)
+        found = {r["path"] for q in per_query for r in q["results"]}
+        stale = _stale_results(con, workspace_root, found)
     finally:
         con.close()
+    if stale:
+        warnings.append(
+            f"{len(stale)} arquivo(s) nos resultados mudaram desde a indexação ({', '.join(stale[:3])}"
+            f"{'…' if len(stale) > 3 else ''}); rode `ctx index` para atualizar"
+        )
+    timed_out = any(q["timed_out"] for q in per_query)
+    if timed_out:
+        warnings.append(f"busca interrompida após {timeout:g}s; use o comando rg sugerido")
     return {
         "queries": per_query,
         "path": path_prefix,
+        "scope": scope,
+        "timed_out": timed_out,
+        "warnings": warnings,
         "elapsed_ms": round((time.perf_counter() - start_t) * 1000, 2),
     }
 
@@ -535,11 +1025,16 @@ def search(
     workspace_root: Path = WORKSPACE_ROOT,
     path_prefix: str | None = None,
     lines: int = DEFAULT_PREVIEW_LINES,
+    timeout: float | None = None,
+    scope: str = "all",
 ) -> dict[str, Any]:
     """Busca cirúrgica de uma única query (atalho para search_many)."""
-    res = search_many([query], top_k=top_k, workspace_root=workspace_root, path_prefix=path_prefix, lines=lines)
+    res = search_many(
+        [query], top_k=top_k, workspace_root=workspace_root, path_prefix=path_prefix, lines=lines, timeout=timeout, scope=scope
+    )
     single = res["queries"][0]
     single["elapsed_ms"] = res["elapsed_ms"]
+    single["warnings"] = res["warnings"]
     return single
 
 
@@ -559,11 +1054,11 @@ def get_map(
     include_archive: bool = False,
 ) -> dict[str, Any]:
     """Mapa estrutural multi-alvo (oculta openspec/changes/archive/ por padrão)."""
-    index_workspace(workspace_root=workspace_root, force=False)
     start_t = time.perf_counter()
-    con = get_db(db_path_for(workspace_root))
+    ensure_current(workspace_root, load_config(workspace_root))
+    con = open_readonly(db_path_for(workspace_root))
     try:
-        rows = con.execute("SELECT path, title, chunk_type, start_line, end_line FROM chunks").fetchall()
+        rows = con.execute("SELECT path, title, chunk_type, start_line, end_line FROM chunks WHERE kind = 'code'").fetchall()
     finally:
         con.close()
 
@@ -653,17 +1148,78 @@ def git_status(workspace_root: Path) -> dict[str, Any]:
     return {"available": out.returncode == 0, "lines": out.stdout.splitlines()}
 
 
+def scope_summary(config: dict[str, Any]) -> str:
+    idx = config["index"]
+    parts = ["gitignore" if idx["respect_gitignore"] else "sem gitignore", f"≤{idx['max_file_kb']}KB", "sem binários"]
+    if idx["reference"]["globs"]:
+        parts.append(f"referência: {', '.join(idx['reference']['globs'])}")
+    return ", ".join(parts)
+
+
+def index_info(workspace_root: Path, config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Tamanho, contagem, idade e escopo do índice (somente leitura)."""
+    config = config or load_config(workspace_root)
+    db = db_path_for(workspace_root)
+    info: dict[str, Any] = {
+        "present": db.exists(),
+        "files": 0,
+        "chunks": 0,
+        "by_kind": {},
+        "db_bytes": db.stat().st_size if db.exists() else 0,
+        "wal_bytes": wal_bytes(db),
+        "indexed_at": None,
+        "age_s": None,
+        "scope": scope_summary(config),
+    }
+    if not db.exists():
+        return info
+    try:
+        con = open_readonly(db)
+        try:
+            info["files"] = con.execute("SELECT COUNT(*) FROM indexed_files").fetchone()[0]
+            info["chunks"] = con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            info["by_kind"] = dict(con.execute("SELECT kind, COUNT(*) FROM indexed_files GROUP BY kind").fetchall())
+            row = con.execute("SELECT value FROM meta WHERE key = 'indexed_at'").fetchone()
+        finally:
+            con.close()
+    except sqlite3.DatabaseError:
+        return info
+    if row:
+        info["indexed_at"] = float(row[0])
+        info["age_s"] = max(0, int(time.time() - float(row[0])))
+    return info
+
+
+def pending_changes(workspace_root: Path) -> int:
+    """Quantos arquivos do escopo diferem do índice (novos, alterados ou removidos). Checagem completa (doctor)."""
+    config = load_config(workspace_root)
+    db = db_path_for(workspace_root)
+    if index_state(db) != "ok":
+        return -1
+    con = open_readonly(db)
+    try:
+        cached = {r[0]: (r[1], r[2]) for r in con.execute("SELECT path, mtime_ns, size FROM indexed_files WHERE kind != 'upstream'")}
+    finally:
+        con.close()
+    pending = 0
+    seen: set[str] = set()
+    for path, rel, _kind in collect_files(workspace_root, config):
+        seen.add(rel)
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        if cached.get(rel) != (st.st_mtime_ns, st.st_size):
+            pending += 1
+    return pending + sum(1 for p in cached if p not in seen)
+
+
 def status(workspace_root: Path = WORKSPACE_ROOT) -> dict[str, Any]:
     """Visão consolidada One-Shot: Git, OpenSpec, saúde do índice FTS5 e do cache de binários."""
     start_t = time.perf_counter()
-    idx = index_workspace(workspace_root=workspace_root, force=False)
-
-    con = get_db(db_path_for(workspace_root))
-    try:
-        files_count = con.execute("SELECT COUNT(*) FROM indexed_files").fetchone()[0]
-        chunks_count = con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-    finally:
-        con.close()
+    config = load_config(workspace_root)
+    ensure = ensure_current(workspace_root, config)
+    info = index_info(workspace_root, config)
 
     bins_file = workspace_root / ".ctx" / "bins.json"
     bins: dict[str, Any] = {"present": bins_file.exists()}
@@ -684,7 +1240,7 @@ def status(workspace_root: Path = WORKSPACE_ROOT) -> dict[str, Any]:
     return {
         "git": git_status(workspace_root),
         "openspec": openspec_status(workspace_root),
-        "index": {"files": files_count, "chunks": chunks_count, "reindexed": idx["indexed"]},
+        "index": {**info, "reindexed": 1 if ensure["reindexed"] else 0, "warnings": ensure["warnings"]},
         "bins": bins,
         "elapsed_ms": round((time.perf_counter() - start_t) * 1000, 2),
     }

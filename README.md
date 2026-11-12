@@ -69,9 +69,24 @@ Depois: ajuste `policy.toml` (harnesses do time e comandos de build/teste), rode
 - **Descoberta One-Shot em 1 Turno** — Troca varreduras cegas (ls -R, find, grep -r) por ctx status/map/search com preview de 25 linhas no Turno 1.
 - **Ferramentas Nativas de Arquivo** — Faz o agente ler, editar e criar arquivos com as ferramentas do harness em vez de cat/head/sed -i/heredoc/redirecionamento no shell.
 - **Toolchains Sandbox-Safe e Coaching One-Shot** — Python sempre do .venv (sem uv, python3 só cria o venv), Node via asdf, zero sondagem de binários e receitas One-Shot.
-- **Motor `ctx`**: `status`, `map`, `search` multi-query, `doctor` e `metrics`.
+- **Motor `ctx`**: `status`, `map`, `search` multi-query (nunca trava: tempo máximo de 3 s), `doctor`/`doctor --fix`, memória entre sessões (`recall`, `fact`), fontes `upstream` em cache, `recipe` de várias etapas, `metrics` e `evaluate`.
 
-**Fonte da verdade: a branch `main`.** Instalar ou reinstalar sempre traz o que está na `main`. Para atualizar um projeto: `uv lock --upgrade-package agent-harness-hub`, `uv sync` e `.venv/bin/ctx init` (o `policy.toml` e as skills do projeto são mantidos).
+### Quando usar cada comando do `ctx`
+
+| Comando | Quando usar |
+| :--- | :--- |
+| `ctx status` / `map` / `search "q1" "q2"` | Turno 1: estado do repositório, estrutura e localização de código em 1 chamada. `search` não escreve no índice, para em 3 s (`--timeout`) e devolve o `rg` equivalente se estourar; `--scope code\|reference\|upstream` filtra a origem |
+| `ctx doctor` / `ctx doctor --fix` | Algo lento ou estranho: reprova WAL > 64 MB, banco grande, índice atrasado ou busca de teste > 500 ms; `--fix` faz checkpoint, VACUUM e reindex |
+| `ctx recall "<pergunta>"` | Sessão retomada ou contexto compactado, antes de repetir comando ou reabrir arquivo: "último comando de build que deu certo", "URL usada para o patch X". Lê só os transcripts locais |
+| `ctx fact add` / `search` / `stale` / `review` | Registrar valores medidos, decisões e armadilhas com fonte e data; `stale` lista fatos cuja fonte mudou; `review` aprova candidatos da captura de fim de sessão (opt-in por `[recall].capture_on_stop`) |
+| `ctx upstream get <projeto> <versão> <caminho>` | Precisa de um arquivo de um projeto upstream: baixa uma vez para `.ctx/upstream/`, indexa e devolve o caminho local; a mesma versão nunca é baixada duas vezes |
+| `ctx recipe list` / `run <nome> [args]` | Rotina de várias etapas repetida (ex.: `copy-verify <origem> <destino>`): uma chamada; cada etapa passa pelo guardrail e uma etapa negada aborta tudo antes de executar |
+| `ctx metrics` | Ver por sessão buscas ctx vs desvios `rg`/`grep`/`sed`, latência, chamadas economizadas por receita e acertos do recall |
+| `ctx evaluate` (ou `/ctx-avaliar`, ou peça "avalie a eficiência do ctx") | Decidir se o ctx está compensando: veredito por recurso e por modelo, ganho líquido estimado (já descontado o custo das instruções) e recomendação |
+
+**Fonte da verdade: a branch `main`.** Instalar ou reinstalar sempre traz o que está na `main`.
+
+**Atualizar um projeto que já tem uma versão anterior:** `uv lock --upgrade-package agent-harness-hub`, `uv sync` e `.venv/bin/ctx upgrade`. É idempotente e não destrutivo: acrescenta ao `policy.toml` só as seções novas (comentadas), troca apenas o bloco gerenciado das skills (preservando o seu texto), atualiza guardrail, hooks, comandos e instruções, e migra ou recria o índice (cache) sozinho. `ctx upgrade --dry-run` mostra antes o que mudaria.
 
 Detalhes, arquitetura e matriz por harness: [`pacotes/autonomia-e-seguranca/GUIA.md`](pacotes/autonomia-e-seguranca/GUIA.md).
 <!-- PACKAGE:END -->
