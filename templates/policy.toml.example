@@ -181,7 +181,8 @@ protected = [
     ".gemini/settings.json",
 ]
 
-# Caminhos do sistema permitidos para leitura segura
+# Caminhos fora do workspace permitidos para leitura segura (aceitam ~ e /**; valem também dentro do ~/data,
+# só para leitura). Ex.: "/run/media/**" (cartão de um aparelho), "~/data/projeto/src" (árvore gerada pelo build).
 readonly_system = [
     "/etc/os-release",
     "/proc/cpuinfo",
@@ -284,6 +285,7 @@ reason = "Volumes pesados e bancos de dados devem consultar o usuário para uso 
 # [recipes.minha-receita]
 # description = "o que a receita faz"
 # params = ["alvo"]
+# requires = ["git status", "rg"]     # comandos de que a receita precisa (`ctx recipe list` mostra os que faltam no allow)
 # steps = ["git status -s -b", "rg -n {alvo} src"]
 
 # ctx:section metrics
@@ -298,3 +300,21 @@ reason = "Volumes pesados e bancos de dados devem consultar o usuário para uso 
 # tokens_per_call = 250               # custo médio de uma chamada de ferramenta evitada
 # recall_hit_calls = 2                # chamadas que um acerto de recall/fato costuma evitar
 # search_adoption_ok = 0.5            # fração de buscas via ctx (vs rg/grep/sed) para "compensa"
+
+# --- ctx 0.5.0: opções novas em tabelas existentes (defaults comentados; descomente na tabela indicada) ---
+# ctx:section search-quality
+# Qualidade da busca (ctx 0.5): acrescente estas chaves à tabela [search].
+# glossary = [["painel", "panel"], ["luz de fundo", "backlight"]]   # termos equivalentes do projeto (PT/EN, apelidos)
+# semantic = true                     # semântica híbrida com o BM25; só com o extra agent-harness-hub[semantic]
+# semantic_model = "minishlab/potion-base-8M"   # baixado no `ctx index` para .ctx/models/ (a busca nunca baixa)
+# C/H por função/struct: extra agent-harness-hub[c]. DTS/DTSI já são cortados por nó, sem dependência.
+
+# ctx:section paths-readonly
+# Leitura fora do workspace (ctx 0.5), na tabela [paths]: readonly_system aceita ~ e /** (ex.: "/run/media/**",
+# "~/data/projeto/src") e vale também dentro do ~/data, só para leitura. Comandos só de leitura que, com caminhos
+# de readonly_system, não pedem confirmação no ~/data:
+# readonly_commands = ["rg", "ls", "fd", "sha256sum", "wc", "stat", "tree", "file", "cmp", "diff"]
+
+# ctx:section metrics-confidence
+# Na tabela [metrics.evaluate] (ctx 0.5):
+# confident_sessions = 30             # abaixo disso o veredito do `ctx evaluate` sai como "provisório"
