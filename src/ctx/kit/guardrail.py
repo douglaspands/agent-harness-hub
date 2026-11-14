@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 # Versão do motor `ctx` que gerou este arquivo: `ctx doctor` compara com a versão instalada e pede `ctx upgrade`.
-KIT_VERSION = "0.4.0"
+KIT_VERSION = "0.5.0"
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 POLICY_PATH = WORKSPACE_ROOT / "policy.toml"
