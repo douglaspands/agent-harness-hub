@@ -517,6 +517,15 @@ def chunk_file(file_path: Path, workspace_root: Path, rel_path: str | None = Non
         return extract_markdown_chunks(file_path, rel_path, content)
     elif suffix in {".patch", ".diff"}:
         return extract_patch_chunks(file_path, rel_path, content)
+    elif suffix in {".c", ".h"}:
+        from ctx.chunkers import extract_c_chunks
+
+        c_chunks = extract_c_chunks(file_path, rel_path, content, Chunk)
+        return c_chunks if c_chunks is not None else extract_generic_chunks(file_path, rel_path, content)
+    elif suffix in {".dts", ".dtsi"}:
+        from ctx.chunkers import extract_dts_chunks
+
+        return extract_dts_chunks(file_path, rel_path, content, Chunk)
     else:
         return extract_generic_chunks(file_path, rel_path, content)
 
