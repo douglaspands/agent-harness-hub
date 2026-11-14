@@ -177,6 +177,228 @@ def has_chaining_operators(cmd: str) -> bool:
 
 
 # --------------------------------------------------------------------------------------
+# Padrões destrutivos casados com o argv (M-24) e scripts citados para outro shell (M-25)
+# --------------------------------------------------------------------------------------
+
+# Entradas conhecidas de commands.deny -> regra estrutural (o texto continua sendo o rótulo da mensagem).
+# As regras estruturais valem sempre; entradas desconhecidas casam como prefixo do argv de cada comando.
+KNOWN_DENY = {
+    "rm -rf /": "rm",
+    "mkfs": "mkfs",
+    ":(){ :|:& };:": "forkbomb",
+    "curl | bash": "pipe-shell",
+    "wget | bash": "pipe-shell",
+    "curl | sh": "pipe-shell",
+    "wget | sh": "pipe-shell",
+}
+RULE_LABELS = {"rm": "rm -rf /", "mkfs": "mkfs", "forkbomb": ":(){ :|:& };:", "pipe-shell": "curl | bash"}
+SYSTEM_DIRS = {
+    "/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64", "/opt", "/proc", "/root", "/sbin",
+    "/srv", "/sys", "/usr", "/var",
+}
+HOME_TARGETS = {"~", "$HOME", "${HOME}"}
+SHELL_NAMES = {"sh", "bash", "zsh", "dash", "ash", "ksh"}
+# Prefixos que só repassam o comando (o programa real vem depois deles e das opções deles)
+PASSTHROUGH = {"sudo", "doas", "run0", "pkexec", "exec", "env", "nice", "nohup", "command", "time", "timeout", "stdbuf", "ionice"}
+_OPT_WITH_VALUE = {
+    "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U", "-T"},
+    "doas": {"-u", "-C"},
+    "nice": {"-n"},
+    "ionice": {"-c", "-n", "-p"},
+    "env": {"-u", "-C", "-S"},
+}
+_SSH_OPT_WITH_VALUE = set("BbcDEeFIiJLlmOoPpQRSWw")
+_ASSIGNMENT_RE = re.compile(r"[A-Za-z_]\w*=")
+SEPARATORS = CHAIN_TOKENS | {"|"}
+
+
+def strip_passthrough(argv: list[str]) -> list[str]:
+    """Tira `VAR=x`, `sudo -u u`, `env`, `timeout 5`… do início: o que sobra começa no programa real."""
+    i = 0
+    while i < len(argv):
+        word = argv[i].lstrip("`")
+        name = Path(word).name
+        if _ASSIGNMENT_RE.match(word):
+            i += 1
+            continue
+        if name not in PASSTHROUGH:
+            break
+        i += 1
+        while i < len(argv) and argv[i].startswith("-") and argv[i] != "--":
+            opt = argv[i]
+            i += 1
+            if opt in _OPT_WITH_VALUE.get(name, ()) and i < len(argv):
+                i += 1
+        if i < len(argv) and argv[i] == "--":
+            i += 1
+        if name == "timeout" and i < len(argv) and re.fullmatch(r"[\d.]+[smhd]?", argv[i]):
+            i += 1
+    out = argv[i:]
+    return [out[0].lstrip("`"), *out[1:]] if out else out
+
+
+def pipelines(tokens: list[str]) -> list[list[list[str]]]:
+    """Tokens -> pipelines (separadas por ; && || & ( )) -> comandos simples (separados por |), sem operadores."""
+    out: list[list[list[str]]] = [[[]]]
+    for t in tokens:
+        if t in SEPARATORS or (is_operator(t) and any(c in t for c in ";()") and ">" not in t and "<" not in t):
+            if t == "|" or t == "|&":
+                out[-1].append([])
+            else:
+                out.append([[]])
+        elif is_operator(t):
+            continue  # redirecionamento: o alvo fica como argumento, inofensivo para as regras abaixo
+        else:
+            out[-1][-1].append(t.rstrip("`") if t.endswith("`") and not t.startswith("`") else t)
+    return [[strip_passthrough(c) for c in p if c] for p in out if any(p)]
+
+
+def _rm_target_is_dangerous(arg: str) -> bool:
+    a = arg[:-2] if arg.endswith("/*") else arg
+    a = a.rstrip("/") or "/"
+    return a in SYSTEM_DIRS or a in HOME_TARGETS or a == os.path.expanduser("~").rstrip("/")
+
+
+def _rm_is_destructive(args: list[str]) -> bool:
+    recursive = False
+    targets: list[str] = []
+    options = True
+    for a in args:
+        if options and a == "--":
+            options = False
+        elif options and a.startswith("--"):
+            if a == "--no-preserve-root":
+                return True
+            recursive = recursive or a == "--recursive"
+        elif options and a.startswith("-") and len(a) > 1:
+            recursive = recursive or "r" in a[1:] or "R" in a[1:]
+        else:
+            targets.append(a)
+    return recursive and any(_rm_target_is_dangerous(t) for t in targets)
+
+
+def embedded_scripts(argv: list[str]) -> list[str]:
+    """Scripts que o comando entrega a outro shell: `sh -c '<s>'` (também dentro de podman/docker/sudo) e
+    `ssh [opções] host <s...>`."""
+    out: list[str] = []
+    if not argv:
+        return out
+    if Path(argv[0]).name == "ssh":
+        i = 1
+        while i < len(argv) and argv[i].startswith("-"):
+            opt = argv[i]
+            i += 1
+            if len(opt) == 2 and opt[1] in _SSH_OPT_WITH_VALUE and i < len(argv):
+                i += 1
+        if i + 1 < len(argv):
+            out.append(" ".join(argv[i + 1 :]))
+        return out
+    for i, word in enumerate(argv[:-1]):
+        if Path(word).name not in SHELL_NAMES:
+            continue
+        for j in range(i + 1, len(argv) - 1):
+            opt = argv[j]
+            if not opt.startswith("-") or opt.startswith("--"):
+                break
+            if "c" in opt[1:]:
+                out.append(argv[j + 1])
+                break
+    return out
+
+
+def destructive_rule(cmd: str, policy: dict[str, Any], depth: int = 0) -> tuple[str, str] | None:
+    """(regra, rótulo do padrão) se o comando (ou um script embutido nele) é destrutivo; senão None."""
+    deny_entries = [str(p) for p in policy.get("commands", {}).get("deny", [])]
+    if ":(){" in cmd.replace(" ", ""):
+        return "forkbomb", RULE_LABELS["forkbomb"]
+    tokens = tokenize(HARMLESS_REDIRECT_RE.sub(" ", cmd))
+    if tokens is None:
+        # Aspas que não fecham: conservador, substring como antes
+        for pat in deny_entries:
+            if pat in cmd:
+                return KNOWN_DENY.get(pat, "custom"), pat
+        return None
+    custom = [p for p in deny_entries if p not in KNOWN_DENY]
+    for pipe in pipelines(tokens):
+        names = [Path(c[0]).name for c in pipe if c]
+        for k, name in enumerate(names):
+            if name in ("curl", "wget") and any(n in SHELL_NAMES for n in names[k + 1 :]):
+                return "pipe-shell", RULE_LABELS["pipe-shell"]
+        for argv in pipe:
+            if not argv:
+                continue
+            name = Path(argv[0]).name
+            if name == "rm" and _rm_is_destructive(argv[1:]):
+                return "rm", RULE_LABELS["rm"]
+            if name.startswith("mkfs"):
+                return "mkfs", RULE_LABELS["mkfs"]
+            text = " ".join(argv)
+            for pat in custom:
+                if _prefix_match(text, pat) or (is_operator_text(pat) and pat in cmd):
+                    return "custom", pat
+            if depth < 4:
+                for script in embedded_scripts(argv):
+                    hit = destructive_rule(script, policy, depth + 1)
+                    if hit:
+                        return hit
+    return None
+
+
+def is_operator_text(pattern: str) -> bool:
+    """Padrão customizado com operadores de shell (ex.: 'a | b'): casa como substring, como antes."""
+    return any(ch in PUNCTUATION for ch in pattern)
+
+
+def _quoted_spans(cmd: str) -> list[tuple[int, int, str]]:
+    """(início, fim exclusivo, aspa) de cada trecho entre aspas simples ou duplas, fora de outras aspas."""
+    spans: list[tuple[int, int, str]] = []
+    i, n = 0, len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch in ("'", '"'):
+            j = i + 1
+            while j < n and cmd[j] != ch:
+                j += 2 if (ch == '"' and cmd[j] == "\\") else 1
+            if j >= n:
+                return spans  # aspas sem fechar: o tokenizador decide
+            spans.append((i, j + 1, ch))
+            i = j + 1
+            continue
+        i += 1
+    return spans
+
+
+_SHELL_C_PREFIX_RE = re.compile(
+    r"(?:^|[\s;&|(])(?:\S*/)?(?:" + "|".join(sorted(SHELL_NAMES)) + r")\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*c[A-Za-z]*\s+$"
+)
+_SSH_PREFIX_RE = re.compile(r"^\s*(?:(?:sudo|doas|exec|command|nice|nohup)\s+)*(?:\S*/)?ssh\s+(?:\S+\s+)*\S+\s+$")
+
+
+def mask_remote_scripts(cmd: str) -> tuple[str, bool]:
+    """Troca por um marcador o texto citado que vai para outro shell (`sh -c '…'`, `ssh host '…'`,
+    `podman run … sh -c '…'`): o encadeamento DENTRO dele não é local. Em aspas duplas, `$(…)` e crase
+    rodam na máquina local, então o trecho fica (e o encadeamento é recusado). Retorna (texto, houve_subst_local)."""
+    out: list[str] = []
+    pos = 0
+    local_subst = False
+    for start, end, quote in _quoted_spans(cmd):
+        prefix = "".join(out) + cmd[pos:start]
+        body = cmd[start + 1 : end - 1]
+        carrier = bool(_SHELL_C_PREFIX_RE.search(prefix) or _SSH_PREFIX_RE.match(prefix))
+        if carrier and quote == '"' and ("$(" in body or "`" in body):
+            local_subst = True
+            carrier = False
+        out.append(cmd[pos:start])
+        out.append("'__script__'" if carrier else cmd[start:end])
+        pos = end
+    out.append(cmd[pos:])
+    return "".join(out), local_subst
+
+
+# --------------------------------------------------------------------------------------
 # Caminhos
 # --------------------------------------------------------------------------------------
 
@@ -444,10 +666,10 @@ def evaluate_shell_command(
     if not cmd_clean:
         return "defer", "Comando vazio ou ausente."
 
-    # 1. Padrões destrutivos (deny)
-    for pat in commands_cfg.get("deny", []):
-        if pat in cmd_clean:
-            return "deny", f"Comando bloqueado pela política de segurança (padrão proibido: '{pat}')."
+    # 1. Padrões destrutivos (deny): casados com o argv (programa e alvos), também dentro de `sh -c`/`ssh`
+    hit = destructive_rule(cmd_clean, policy)
+    if hit:
+        return "deny", f"Comando bloqueado pela política de segurança (padrão proibido: '{hit[1]}')."
 
     # 1b. Ferramentas nativas de arquivo (deny instrutivo quando [file_tools].mode = "coach").
     #     Antes do encadeamento para que um heredoc multi-linha receba a orientação certa.
@@ -455,8 +677,16 @@ def evaluate_shell_command(
     if file_tools and not any(dp in cmd_clean for dp in policy.get("paths", {}).get("deny", [])):
         return file_tools
 
-    # 2. Encadeamento de comandos (deny)
-    if has_chaining_operators(cmd_clean):
+    # 2. Encadeamento de comandos (deny). O script citado de `ssh host '…'`/`sh -c '…'` roda em outro shell:
+    #    só as regras destrutivas (passo 1) valem para ele.
+    masked, local_subst = mask_remote_scripts(cmd_clean)
+    if has_chaining_operators(masked):
+        if local_subst:
+            return (
+                "deny",
+                "Em aspas duplas, `$(…)` e crase rodam na máquina LOCAL antes do ssh/sh -c. Passe o script em aspas "
+                "simples (ex.: ssh host 'x=$(cmd) ; echo $x'), que ele vai inteiro para o outro shell.",
+            )
         return (
             "deny",
             "Encadeamento de comandos shell (&&, ||, ;, &, subshells) é proibido: cada comando precisa ser avaliado "
