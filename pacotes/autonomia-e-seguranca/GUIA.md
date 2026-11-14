@@ -536,3 +536,36 @@ Tudo configurável em `policy.toml` (seções novas são opcionais: sem elas val
 
 ### 11.6 Atualizar de uma versão anterior
 `ctx upgrade` (veja o `INSTALL.md`): idempotente e não destrutivo; `--dry-run` mostra antes. Policy antiga continua funcionando sem edição (cada chave ausente cai no padrão do código), um guardrail antigo ignora chaves desconhecidas de uma policy nova e o `doctor` avisa quando `scripts/guardrail.py` está numa versão diferente do motor.
+
+## 12. Qualidade da busca, guardrail por argumentos e avaliação por regra (v0.5)
+
+Melhorias medidas num projeto real (código bilíngue, kernel em C, Device Tree, patches, operação por `ssh`). O `ctx upgrade` acrescenta ao `policy.toml` as dicas comentadas das chaves novas; o índice antigo é recriado sozinho na primeira chamada (esquema 3).
+
+### 12.1 Busca
+- **Recuo da consulta:** todos os termos → substring (tabela de trigramas: `dsidph`, `lane_mb`) → qualquer termo. O modo aparece no cabeçalho do resultado.
+- **Ranking:** BM25 com pesos por coluna (título 6, nome do arquivo 4, caminho 2, conteúdo 1) e bônus quando um termo é o nome do arquivo (`r36os push` → `push.py`). Palavras vazias PT/EN saem da consulta lexical.
+- **Glossário do projeto:**
+  ```toml
+  [search]
+  glossary = [["painel", "panel"], ["luz de fundo", "backlight"], ["taxa da lane", "lane_mbps"]]
+  ```
+- **Cortes estruturais:** DTS/DTSI por nó (sem dependência); C/H por função/struct/tabela com o extra `c`; seções longas de markdown em partes de até 60 linhas.
+- **Prévia** centrada na primeira linha que casou, com linhas cortadas em 200 caracteres.
+- **Semântica híbrida (extra `semantic`):** model2vec `potion-base-8M` (só CPU), fusão RRF com o BM25 (`via` = `bm25`, `sem` ou `bm25+sem`); pulada quando o BM25 já resolveu. O modelo é baixado **só no `ctx index`** para `.ctx/models/`; a busca nunca acessa a rede. `[search].semantic = false` desliga; `semantic_model` troca o modelo.
+- **Arquivos alterados desde a indexação:** com `refresh = "incremental"`, os que aparecem nos resultados são reindexados na hora; com `"off"` (padrão), a busca não escreve e só avisa.
+
+### 12.2 Guardrail
+- **Padrões destrutivos casam com o argv:** `rm` recursivo só é barrado em `/`, `/*`, `~`, `$HOME` ou diretório de sistema; `mkfs*` só como programa; `curl|wget … | sh` como pipeline. Argumentos de `rg`/`grep`/`ctx search` nunca são comandos (`rg "mksquashfs"` passa).
+- **Scripts para outro shell:** o texto em aspas simples de `ssh host '…'`, `sh -c '…'` e `podman/docker run … sh -c '…'` passa só pelas regras destrutivas, não pela de encadeamento. Em aspas duplas, `$(…)` roda localmente e continua recusado.
+- **Leitura fora do workspace:**
+  ```toml
+  [paths]
+  readonly_system = ["/etc/os-release", "/run/media/**", "~/data/projeto/src"]
+  readonly_commands = ["rg", "ls", "fd", "sha256sum", "wc", "stat", "tree", "file", "cmp", "diff"]
+  ```
+  `readonly_system` aceita `~` e `/**` e vale dentro do `~/data` só para leitura (ferramenta de leitura ou comando de `readonly_commands`); escrita e outros caminhos do `~/data` seguem pedindo confirmação.
+- **Id de regra:** todo `deny` termina com `[regra: <id>]` e o hook grava o id em `.ctx/events.jsonl`.
+
+### 12.3 Receitas e avaliação
+- `requires = [...]` em `[recipes.<nome>]` declara os comandos de que a receita precisa; `ctx recipe list` mostra os que faltam no `commands.allow`, e o `ctx init` já libera `cp`, `sync` e `sha256sum` da `copy-verify`.
+- `ctx evaluate`: tabela "Bloqueios por regra" (repetidos na mesma sessão = coaching que não ensinou), veredito **provisório** abaixo de `[metrics.evaluate].confident_sessions` (30), adoção da busca por sessão e recomendação de `ctx fact add` quando não há fatos.
