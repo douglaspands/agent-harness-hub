@@ -80,15 +80,27 @@ def _c_symbol(node: Any) -> tuple[str, str] | None:
     return None
 
 
+MIN_TAIL_LINES = MAX_CHUNK_LINES // 4  # sobra menor que isso fica na parte anterior
+
+
 def split_long(rel: str, title: str, ctype: str, lines: list[str], start: int, end: int, chunk: Callable) -> list[Any]:
-    """Um trecho [start, end] (1-based, inclusivo), dividido em partes se passar de MAX_CHUNK_LINES."""
-    if end - start + 1 <= MAX_CHUNK_LINES:
+    """Um trecho [start, end] (1-based, inclusivo), dividido em partes se passar de MAX_CHUNK_LINES.
+
+    Uma sobra curta (fim da função) fica junto da parte anterior: sozinha, ela ganharia do resto no BM25 só por ser
+    curta e a busca devolveria 4 linhas de `return 0; }` no lugar da função.
+    """
+    if end - start + 1 <= MAX_CHUNK_LINES + MIN_TAIL_LINES:
         return [chunk(rel, title, ctype, start, end, "\n".join(lines[start - 1 : end]))]
-    out = []
-    for part, s in enumerate(range(start, end + 1, MAX_CHUNK_LINES), start=1):
-        e = min(s + MAX_CHUNK_LINES - 1, end)
-        out.append(chunk(rel, f"{title} (part {part})", ctype, s, e, "\n".join(lines[s - 1 : e])))
-    return out
+    bounds: list[list[int]] = []
+    for s in range(start, end + 1, MAX_CHUNK_LINES):
+        bounds.append([s, min(s + MAX_CHUNK_LINES - 1, end)])
+    if len(bounds) > 1 and bounds[-1][1] - bounds[-1][0] + 1 < MIN_TAIL_LINES:
+        tail = bounds.pop()
+        bounds[-1][1] = tail[1]
+    return [
+        chunk(rel, f"{title} (part {n})", ctype, s, e, "\n".join(lines[s - 1 : e]))
+        for n, (s, e) in enumerate(bounds, start=1)
+    ]
 
 
 _DEFINE_RE = re.compile(r"^\s*#\s*define\s+(\w+)")

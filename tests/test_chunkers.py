@@ -62,9 +62,19 @@ class TestDts(unittest.TestCase):
         self.assertIn("panel@0", titles["&dsi"].content)  # nó filho fica dentro do pai
 
     def test_long_node_is_split_in_parts(self) -> None:
-        body = "\n".join(f"\tprop{i} = <{i}>;" for i in range(MAX_CHUNK_LINES + 10))
+        body = "\n".join(f"\tprop{i} = <{i}>;" for i in range(MAX_CHUNK_LINES + 40))
         chunks = extract_dts_chunks(Path("x.dtsi"), "x.dtsi", f"&big {{\n{body}\n}};\n", Chunk)
         self.assertEqual([c.title for c in chunks if c.chunk_type == "dts_node"], ["&big (part 1)", "&big (part 2)"])
+
+    def test_short_tail_stays_with_the_previous_part(self) -> None:
+        """Função de 124 linhas não vira 120 + 4: a sobra curta ganharia no BM25 por ser curta."""
+        from ctx.chunkers import split_long
+
+        lines = [f"l{i}" for i in range(1, 400)]
+        one = split_long("f.c", "fn", "c_function", lines, 1, MAX_CHUNK_LINES + 4, Chunk)
+        self.assertEqual([(c.title, c.start_line, c.end_line) for c in one], [("fn", 1, MAX_CHUNK_LINES + 4)])
+        parts = split_long("f.c", "fn", "c_function", lines, 1, 2 * MAX_CHUNK_LINES + 5, Chunk)
+        self.assertEqual([(c.start_line, c.end_line) for c in parts], [(1, 120), (121, 245)])
 
 
 @unittest.skipUnless(c_parser(), "extra opcional `c` (tree-sitter-c) não instalado")
