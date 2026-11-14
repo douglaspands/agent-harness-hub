@@ -78,6 +78,49 @@ class TestSearchQuality(unittest.TestCase):
         self.assertLess(len(line), 260)
 
 
+class TestFileName(unittest.TestCase):
+    """M-26: o nome do arquivo pesa no ranking; com refresh incremental, resultados desatualizados são reindexados."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        (self.root / ".ctx").mkdir()
+        pkg = self.root / "src" / "r36os"
+        pkg.mkdir(parents=True)
+        (pkg / "push.py").write_text(
+            '"""Update a console over the USB cable: `r36os push`."""\n\n\ndef run(args):\n    return sync(args)\n',
+            encoding="utf-8",
+        )
+        # concorrentes que repetem "push" e "r36os" no conteúdo e no título
+        (pkg / "services.py").write_text(
+            '"""r36os services: push, push, push."""\n\n\ndef push_service(r36os):\n    """push the r36os push service."""\n',
+            encoding="utf-8",
+        )
+        (self.root / "notes.md").write_text("# r36os push\n\nr36os push push push over ssh.\n", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_module_named_after_a_query_term_comes_first(self) -> None:
+        top = search_many(["r36os push"], workspace_root=self.root)["queries"][0]["results"][0]
+        self.assertEqual(top["path"], "src/r36os/push.py")
+
+    def test_stale_results_are_reindexed_with_incremental_refresh(self) -> None:
+        from unittest import mock
+
+        index_workspace(self.root)
+        (self.root / "notes.md").write_text("# r36os push\n\nzanzibar novo conteúdo.\n", encoding="utf-8")
+        quiet = {"reindexed": False, "repaired": False, "warnings": []}
+        with mock.patch("ctx.rag.ensure_current", return_value=quiet):
+            off = search_many(["r36os push"], workspace_root=self.root)
+            self.assertTrue(any("mudaram desde a indexação" in w for w in off["warnings"]))
+            (self.root / "policy.toml").write_text('[search]\nrefresh = "incremental"\n', encoding="utf-8")
+            res = search_many(["r36os push"], workspace_root=self.root)
+        self.assertFalse(any("mudaram desde a indexação" in w for w in res["warnings"]))
+        z = search_many(["zanzibar"], workspace_root=self.root)["queries"][0]
+        self.assertEqual(z["results"][0]["path"], "notes.md")
+
+
 class TestRAG(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()

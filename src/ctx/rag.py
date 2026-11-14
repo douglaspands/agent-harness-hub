@@ -40,6 +40,13 @@ SCHEMA_VERSION = 3
 BM25_WEIGHTS = (2.0, 6.0, 0.5, 0.0, 0.0, 1.0, 0.0, 4.0)
 RRF_K = 60  # reciprocal rank fusion entre as listas (BM25, semântica)
 HYBRID_POOL = 20  # candidatos de cada lista antes da fusão
+NAME_BONUS = 0.25  # termo da consulta igual ao nome do arquivo (`push` -> push.py) vale +25% (M-26)
+
+
+def name_bonus(path: str, terms: list[str]) -> float:
+    """Multiplicador do resultado: 1 + NAME_BONUS quando um termo é o nome do arquivo sem extensão."""
+    stem = fold(Path(path).stem)
+    return 1.0 + NAME_BONUS if stem and any(fold(t) == stem for t in terms) else 1.0
 KINDS = ("code", "reference", "upstream")
 # WAL acima disso não vale a pena consolidar na hora de uma busca: o índice é recriado do zero.
 WAL_REBUILD_BYTES = 1024 * 1024 * 1024
@@ -1068,6 +1075,36 @@ def ensure_current(workspace_root: Path, config: dict[str, Any]) -> dict[str, An
     return info
 
 
+def reindex_paths(workspace_root: Path, paths: list[str], config: dict[str, Any], budget_ms: float) -> int:
+    """Reindexa só estes arquivos (mudaram desde a indexação), dentro do orçamento. Retorna quantos foram tratados."""
+    start = time.perf_counter()
+    db = db_path_for(workspace_root)
+    con = get_db(db, config["index"])
+    tri = has_table(con, "chunks_tri")
+    done = 0
+    try:
+        with con:
+            for rel in paths:
+                if (time.perf_counter() - start) * 1000 > budget_ms:
+                    break
+                row = con.execute("SELECT kind FROM indexed_files WHERE path = ?", (rel,)).fetchone()
+                kind = row[0] if row else "code"
+                path = Path(rel) if Path(rel).is_absolute() else workspace_root / rel
+                try:
+                    st = path.stat()
+                except OSError:
+                    _delete_path(con, rel, tri)
+                    con.execute("DELETE FROM indexed_files WHERE path = ?", (rel,))
+                    done += 1
+                    continue
+                _store_file(con, path, workspace_root, rel, kind, st, tri)
+                done += 1
+    finally:
+        con.close()
+    checkpoint(db)
+    return done
+
+
 def _stale_results(con: sqlite3.Connection, workspace_root: Path, paths: set[str]) -> list[str]:
     """Arquivos presentes nos resultados que mudaram desde a indexação (checagem barata: só o que foi retornado)."""
     stale: list[str] = []
@@ -1114,17 +1151,19 @@ def _search_one(
             # "interrupted" = o progress handler estourou o prazo
             lexical, mode = [], ""
             timed_out = deadline is not None and time.perf_counter() >= deadline
-        ranked = fuse([(1.0, "bm25", lexical)])
         terms = lexical_tokens(expanded)
-        for rid, score, via in ranked[:top_k]:
-            if deadline is not None and time.perf_counter() > deadline:
-                timed_out = True
-                break
+        candidates: list[tuple[float, str, tuple[Any, ...]]] = []
+        for rid, score, via in fuse([(1.0, "bm25", lexical)]):
             row = con.execute(
                 "SELECT path, title, chunk_type, start_line, end_line, kind, content FROM chunks WHERE rowid = ?", (rid,)
             ).fetchone()
-            if row is None:
-                continue
+            if row is not None:
+                candidates.append((score * name_bonus(row[0], terms), via, row))
+        candidates.sort(key=lambda c: -c[0])
+        for score, via, row in candidates[:top_k]:
+            if deadline is not None and time.perf_counter() > deadline:
+                timed_out = True
+                break
             results.append(
                 {
                     "path": row[0],
@@ -1244,20 +1283,28 @@ def search_many(
     deadline = time.perf_counter() + timeout
 
     glossary = config["search"].get("glossary") or []
-    con = open_readonly(db_path_for(workspace_root))
-    file_cache: dict[str, list[str]] = {}
-    con.set_progress_handler(lambda: 1 if time.perf_counter() > deadline else 0, 10000)
     warnings = list(info["warnings"])
-    try:
-        per_query = [
-            _search_one(con, workspace_root, q, top_k, path_prefix, lines, file_cache, kinds, deadline, glossary)
-            for q in queries
-        ]
-        con.set_progress_handler(None, 0)
-        found = {r["path"] for q in per_query for r in q["results"]}
-        stale = _stale_results(con, workspace_root, found)
-    finally:
-        con.close()
+
+    def run() -> tuple[list[dict[str, Any]], list[str]]:
+        con = open_readonly(db_path_for(workspace_root))
+        file_cache: dict[str, list[str]] = {}
+        con.set_progress_handler(lambda: 1 if time.perf_counter() > deadline else 0, 10000)
+        try:
+            found_q = [
+                _search_one(con, workspace_root, q, top_k, path_prefix, lines, file_cache, kinds, deadline, glossary)
+                for q in queries
+            ]
+            con.set_progress_handler(None, 0)
+            return found_q, _stale_results(con, workspace_root, {r["path"] for q in found_q for r in q["results"]})
+        finally:
+            con.close()
+
+    per_query, stale = run()
+    if stale and config["search"]["refresh"] == "incremental":
+        # M-26: os poucos arquivos dos resultados que mudaram são reindexados na hora e a busca é refeita
+        done = reindex_paths(workspace_root, stale, config, float(config["search"]["refresh_budget_ms"]))
+        if done:
+            per_query, stale = run()
     if stale:
         warnings.append(
             f"{len(stale)} arquivo(s) nos resultados mudaram desde a indexação ({', '.join(stale[:3])}"
