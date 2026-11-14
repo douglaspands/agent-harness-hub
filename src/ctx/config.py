@@ -42,6 +42,9 @@ DEFAULTS: dict[str, Any] = {
         "refresh_budget_ms": 300,
         # Grupos de termos equivalentes do projeto, ex.: [["painel", "panel"], ["luz de fundo", "backlight"]] (M-11)
         "glossary": [],
+        # Semântica híbrida (M-05): só vale com o extra `semantic` instalado; o modelo é baixado no `ctx index`
+        "semantic": True,
+        "semantic_model": "minishlab/potion-base-8M",
     },
     "doctor": {
         "wal_max_mb": 64,

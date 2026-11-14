@@ -61,6 +61,8 @@ def cmd_index(args: argparse.Namespace) -> int:
     print(f"  • Arquivos inalterados (pulados): {res['skipped']}")
     print(f"  • Total de arquivos rastreados: {res['total']}")
     print(f"  • WAL após consolidar: {res['wal_bytes']} bytes")
+    for note in res.get("notes", []):
+        print(f"ℹ {note}")
     return 0
 
 

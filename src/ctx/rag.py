@@ -791,7 +791,7 @@ def _store_file(
 
 
 def index_workspace(
-    workspace_root: Path = WORKSPACE_ROOT, force: bool = False, budget_ms: float | None = None
+    workspace_root: Path = WORKSPACE_ROOT, force: bool = False, budget_ms: float | None = None, download: bool = True
 ) -> dict[str, Any]:
     """Indexa incrementalmente o repositório em SQLite FTS5 e consolida o WAL ao final.
 
@@ -806,6 +806,9 @@ def index_workspace(
     indexed_count = skipped_count = 0
     partial = False
     tri = has_table(con, "chunks_tri")
+    model, notes = semantic_for_index(workspace_root, config, con, download)
+    if model is not None and _meta(con, "semantic_model") != config["search"]["semantic_model"]:
+        force = True  # modelo novo (ou extra recém-instalado): todos os trechos ganham vetores
     try:
         cached_meta = {
             row[0]: (row[1], row[2], row[3]) for row in con.execute("SELECT path, mtime_ns, size, kind FROM indexed_files")
@@ -828,7 +831,7 @@ def index_workspace(
                 if deadline and time.perf_counter() > deadline:
                     partial = True
                     continue
-                _store_file(con, path, workspace_root, rel, kind, st, tri)
+                _store_file(con, path, workspace_root, rel, kind, st, tri, model)
                 indexed_count += 1
 
             if not partial:
@@ -837,6 +840,10 @@ def index_workspace(
                         _delete_path(con, cached_path, tri)
                         con.execute("DELETE FROM indexed_files WHERE path = ?", (cached_path,))
                 con.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('indexed_at', ?)", (str(time.time()),))
+                con.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('semantic_model', ?)",
+                    (config["search"]["semantic_model"] if model is not None else "",),
+                )
     finally:
         con.close()
     # Consolida o WAL (journal_size_limit então o trunca): o índice nunca deve deixar um -wal gigante para trás.
@@ -850,7 +857,56 @@ def index_workspace(
         "partial": partial,
         "wal_bytes": wal["after"],
         "elapsed_ms": round(elapsed_ms, 2),
+        "notes": notes,
     }
+
+
+def _meta(con: sqlite3.Connection, key: str) -> str:
+    row = con.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return str(row[0]) if row and row[0] is not None else ""
+
+
+def semantic_for_index(
+    workspace_root: Path, config: dict[str, Any], con: sqlite3.Connection, download: bool = True
+) -> tuple[Any, list[str]]:
+    """Modelo de embeddings para a indexação e avisos do que ficou desligado, cada um UMA vez.
+
+    Só `ctx index` (download=True) baixa o modelo; a indexação disparada por uma busca usa o que já está no disco.
+    """
+    notes: list[str] = []
+
+    def once(key: str, text: str) -> None:
+        if _meta(con, key) != "1":
+            notes.append(text)
+            with con:
+                con.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, '1')", (key,))
+
+    from ctx import chunkers, semantic
+
+    if chunkers.c_parser() is None:
+        once("warned_no_c", "C/H usam o corte genérico: instale o extra `c` (agent-harness-hub[c]) para cortar por função/struct.")
+    if not config["search"].get("semantic", True):
+        return None, notes
+    if not semantic.available():
+        once("warned_no_semantic", "busca semântica desligada: instale o extra `semantic` (agent-harness-hub[semantic]).")
+        return None, notes
+    if not download:
+        return search_model(workspace_root, config), notes
+    model = semantic.get_model(workspace_root, config["search"]["semantic_model"], allow_download=True)
+    if model is None:
+        notes.append(f"busca semântica: não foi possível carregar/baixar {config['search']['semantic_model']}; segue só o BM25.")
+    return model, notes
+
+
+def search_model(workspace_root: Path, config: dict[str, Any]) -> Any:
+    """Modelo para a busca: só o que já está em .ctx/models (a busca nunca baixa nada nem acessa a rede)."""
+    if not config["search"].get("semantic", True):
+        return None
+    from ctx import semantic
+
+    if not semantic.model_dir(workspace_root, config["search"]["semantic_model"]).is_dir():
+        return None
+    return semantic.get_model(workspace_root, config["search"]["semantic_model"], allow_download=False)
 
 
 def index_extra_file(workspace_root: Path, path: Path, kind: str = "upstream") -> str:
@@ -861,9 +917,10 @@ def index_extra_file(workspace_root: Path, path: Path, kind: str = "upstream") -
         rel = str(path.resolve())
     config = load_config(workspace_root)
     con = get_db(db_path_for(workspace_root), config["index"])
+    model = search_model(workspace_root, config) if _meta(con, "semantic_model") else None
     try:
         with con:
-            _store_file(con, path, workspace_root, rel, kind, path.stat(), has_table(con, "chunks_tri"))
+            _store_file(con, path, workspace_root, rel, kind, path.stat(), has_table(con, "chunks_tri"), model)
     finally:
         con.close()
     checkpoint(db_path_for(workspace_root))
@@ -1062,13 +1119,13 @@ def ensure_current(workspace_root: Path, config: dict[str, Any]) -> dict[str, An
     if state != "ok":
         if state == "broken":
             remove_db(db)
-        res = index_workspace(workspace_root)
+        res = index_workspace(workspace_root, download=False)
         info["reindexed"] = True
         info["warnings"].append(
             f"índice {'criado' if state == 'missing' else 'recriado (versão anterior/corrompido)'}: {res['total']} arquivos em {res['elapsed_ms']}ms"
         )
     elif config["search"]["refresh"] == "incremental":
-        res = index_workspace(workspace_root, budget_ms=float(config["search"]["refresh_budget_ms"]))
+        res = index_workspace(workspace_root, budget_ms=float(config["search"]["refresh_budget_ms"]), download=False)
         info["reindexed"] = res["indexed"] > 0
         if res["partial"]:
             info["warnings"].append("atualização incremental parcial (orçamento de tempo); rode `ctx index`")
@@ -1097,7 +1154,7 @@ def reindex_paths(workspace_root: Path, paths: list[str], config: dict[str, Any]
                     con.execute("DELETE FROM indexed_files WHERE path = ?", (rel,))
                     done += 1
                     continue
-                _store_file(con, path, workspace_root, rel, kind, st, tri)
+                _store_file(con, path, workspace_root, rel, kind, st, tri, search_model(workspace_root, config))
                 done += 1
     finally:
         con.close()
@@ -1131,6 +1188,7 @@ def _search_one(
     kinds: list[str] | None = None,
     deadline: float | None = None,
     glossary: list[list[str]] | None = None,
+    model: Any = None,
 ) -> dict[str, Any]:
     """BM25 ponderado com recuo (todos os termos -> substring -> qualquer termo), fundido por RRF com as outras
     listas de candidatos (semântica, quando instalada). `mode` diz qual passo do recuo trouxe o resultado."""
@@ -1151,9 +1209,15 @@ def _search_one(
             # "interrupted" = o progress handler estourou o prazo
             lexical, mode = [], ""
             timed_out = deadline is not None and time.perf_counter() >= deadline
+        sem: list[int] = []
+        # a semântica só entra quando o BM25 não resolveu sozinho (todos os termos em top_k trechos)
+        if model is not None and not timed_out and not (mode.startswith("and") and len(lexical) >= top_k):
+            sem = _semantic_rowids(con, model, expanded, prefix, kinds, pool)
+            if sem and not lexical:
+                mode = "semantic"
         terms = lexical_tokens(expanded)
         candidates: list[tuple[float, str, tuple[Any, ...]]] = []
-        for rid, score, via in fuse([(1.0, "bm25", lexical)]):
+        for rid, score, via in fuse([(1.0, "bm25", lexical), (SEMANTIC_WEIGHT, "sem", sem)]):
             row = con.execute(
                 "SELECT path, title, chunk_type, start_line, end_line, kind, content FROM chunks WHERE rowid = ?", (rid,)
             ).fetchone()
@@ -1249,6 +1313,31 @@ def _lexical_rowids(
     return [], ""
 
 
+SEMANTIC_WEIGHT = 0.8  # peso da lista semântica na fusão (BM25 = 1.0): o termo exato vence o empate
+
+
+def _semantic_rowids(
+    con: sqlite3.Connection, model: Any, query: str, prefix: str, kinds: list[str] | None, limit: int
+) -> list[int]:
+    from ctx import semantic
+
+    try:
+        cands = semantic.top_rowids(con, model, query, limit * 4)
+    except sqlite3.OperationalError as e:
+        if "interrupt" in str(e):
+            raise
+        return []
+    except Exception:  # noqa: BLE001 - semântica é opcional
+        return []
+    if not cands:
+        return []
+    ids = [rid for rid, _ in cands]
+    extra, params = _filters(prefix, kinds)
+    marks = ",".join("?" * len(ids))
+    allowed = {int(r[0]) for r in con.execute(f"SELECT rowid FROM chunks WHERE rowid IN ({marks}){extra}", [*ids, *params])}
+    return [rid for rid in ids if rid in allowed][:limit]
+
+
 def fuse(lists: list[tuple[float, str, list[int]]]) -> list[tuple[int, float, str]]:
     """Reciprocal rank fusion (k = RRF_K): (rowid, pontuação, origem `bm25`/`sem`/`bm25+sem`), melhor primeiro."""
     scores: dict[int, float] = {}
@@ -1283,6 +1372,7 @@ def search_many(
     deadline = time.perf_counter() + timeout
 
     glossary = config["search"].get("glossary") or []
+    model = search_model(workspace_root, config)  # nunca baixa nada na busca
     warnings = list(info["warnings"])
 
     def run() -> tuple[list[dict[str, Any]], list[str]]:
@@ -1291,7 +1381,7 @@ def search_many(
         con.set_progress_handler(lambda: 1 if time.perf_counter() > deadline else 0, 10000)
         try:
             found_q = [
-                _search_one(con, workspace_root, q, top_k, path_prefix, lines, file_cache, kinds, deadline, glossary)
+                _search_one(con, workspace_root, q, top_k, path_prefix, lines, file_cache, kinds, deadline, glossary, model)
                 for q in queries
             ]
             con.set_progress_handler(None, 0)
