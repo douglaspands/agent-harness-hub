@@ -135,6 +135,20 @@ Especificação técnica.
         titles = [c.title for c in extract_markdown_chunks(f, "g.md", md)]
         self.assertEqual(titles, ["Guia", "Seção Real"])
 
+    def test_long_markdown_section_is_split_keeping_the_title(self) -> None:
+        """M-13: seção longa vira partes por item de lista/parágrafo, todas com o título da seção."""
+        items = "\n".join(f"- item {i}: texto da tarefa {i}" for i in range(150))
+        md = f"# Tarefas\n\n{items}\n\n## Curta\nok\n"
+        f = self.workspace / "tasks.md"
+        chunks = extract_markdown_chunks(f, "tasks.md", md)
+        tarefas = [c for c in chunks if c.title.startswith("Tarefas")]
+        self.assertGreaterEqual(len(tarefas), 3)
+        self.assertEqual(tarefas[1].title, "Tarefas (parte 2)")
+        self.assertTrue(all(c.end_line - c.start_line + 1 <= 60 for c in tarefas))
+        self.assertTrue(all(c.content.startswith("- item") for c in tarefas[1:]))  # corta no item, não no meio
+        self.assertEqual(sum(c.content.count("- item") for c in tarefas), 150)  # nada se perde
+        self.assertEqual(chunks[-1].title, "Curta")
+
     def test_sanitize_query(self) -> None:
         q = "guardrail; rm -rf / 'teste' \"palavra\""
         sanitized = sanitize_query(q)

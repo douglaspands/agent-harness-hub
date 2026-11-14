@@ -351,18 +351,7 @@ def extract_markdown_chunks(file_path: Path, rel_path: str, content: str) -> lis
         match = None if in_fence else header_pattern.match(line)
         if match:
             if current_lines:
-                chunk_text = "\n".join(current_lines).strip()
-                if chunk_text:
-                    chunks.append(
-                        Chunk(
-                            path=rel_path,
-                            title=current_title,
-                            chunk_type="markdown_section",
-                            start_line=current_start,
-                            end_line=i - 1,
-                            content=chunk_text,
-                        )
-                    )
+                chunks += markdown_section_chunks(rel_path, current_title, current_start, current_lines)
             current_title = match.group(2).strip()
             current_start = i
             current_lines = [line]
@@ -370,20 +359,44 @@ def extract_markdown_chunks(file_path: Path, rel_path: str, content: str) -> lis
             current_lines.append(line)
 
     if current_lines:
-        chunk_text = "\n".join(current_lines).strip()
-        if chunk_text:
-            chunks.append(
-                Chunk(
-                    path=rel_path,
-                    title=current_title,
-                    chunk_type="markdown_section",
-                    start_line=current_start,
-                    end_line=len(lines),
-                    content=chunk_text,
-                )
-            )
+        chunks += markdown_section_chunks(rel_path, current_title, current_start, current_lines)
 
     return chunks
+
+
+MD_MAX_LINES = 60  # seção maior que isso vira partes (M-13): seções enormes dominavam o BM25
+_MD_ITEM_RE = re.compile(r"^(?:[-*+]|\d+[.)])\s")
+
+
+def markdown_section_chunks(rel_path: str, title: str, start: int, sec_lines: list[str]) -> list[Chunk]:
+    """Um trecho por seção; se passar de MD_MAX_LINES, partes cortadas em item de lista de nível 1 ou parágrafo
+    (nunca dentro de bloco de código), cada uma com o título da seção."""
+    if not "\n".join(sec_lines).strip():
+        return []
+    if len(sec_lines) <= MD_MAX_LINES:
+        return [Chunk(rel_path, title, "markdown_section", start, start + len(sec_lines) - 1, "\n".join(sec_lines).strip())]
+    parts: list[tuple[int, int]] = []  # índices [a, b) em sec_lines
+    a = 0
+    last_cut = None
+    in_fence = False
+    for k, line in enumerate(sec_lines):
+        if line.lstrip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+        boundary = not in_fence and k > a and (not sec_lines[k - 1].strip() or _MD_ITEM_RE.match(line))
+        if boundary:
+            last_cut = k
+        if k - a + 1 > MD_MAX_LINES:
+            cut = last_cut if last_cut and last_cut > a else k
+            parts.append((a, cut))
+            a, last_cut = cut, None
+    parts.append((a, len(sec_lines)))
+    out: list[Chunk] = []
+    for n, (pa, pb) in enumerate(parts, start=1):
+        body = "\n".join(sec_lines[pa:pb]).strip()
+        if body:
+            label = title if n == 1 else f"{title} (parte {n})"
+            out.append(Chunk(rel_path, label, "markdown_section", start + pa, start + pb - 1, body))
+    return out
 
 
 def extract_generic_chunks(file_path: Path, rel_path: str, content: str) -> list[Chunk]:
