@@ -112,7 +112,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 SEARCH_MODE_LABEL = {
     "and": "",
     "trigram": " · por substring (trigramas)",
-    "or": " · com qualquer termo (nenhum trecho tem todos)",
+    "or": " · com qualquer termo",
     "semantic": " · só por semelhança (nenhum termo casou)",
 }
 
@@ -129,7 +129,7 @@ def cmd_search(args: argparse.Namespace) -> int:
         print(f"⚠ {w}")
 
     for q in res["queries"]:
-        label = SEARCH_MODE_LABEL.get(q.get("mode", "").removesuffix("+glossary"), "")
+        label = "".join(SEARCH_MODE_LABEL.get(m, "") for m in q.get("mode", "").split("+"))
         if q.get("glossary"):
             label += f" · glossário: {'; '.join(q['glossary'])}"
         print(f"\n═══ '{q['query']}' — {q['count']} resultados{label} ═══")

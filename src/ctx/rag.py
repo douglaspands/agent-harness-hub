@@ -1216,14 +1216,15 @@ def _search_one(
     elif query_tokens(query):
         pool = max(HYBRID_POOL, top_k)
         try:
-            lexical, mode = _lexical_rowids(con, query, prefix, kinds, pool, variants, expanded)
+            lexical, mode = _lexical_rowids(con, query, prefix, kinds, pool, variants, expanded, want=top_k)
         except sqlite3.OperationalError:
             # "interrupted" = o progress handler estourou o prazo
             lexical, mode = [], ""
             timed_out = deadline is not None and time.perf_counter() >= deadline
         sem: list[int] = []
         # a semântica só entra quando o BM25 não resolveu sozinho (todos os termos em top_k trechos)
-        if model is not None and not timed_out and not (mode.startswith("and") and len(lexical) >= top_k):
+        and_only = set(mode.split("+")) <= {"and", "glossary"}
+        if model is not None and not timed_out and not (and_only and len(lexical) >= top_k):
             sem = _semantic_rowids(con, model, expanded, prefix, kinds, pool)
             if sem and not lexical:
                 mode = "semantic"
@@ -1291,17 +1292,25 @@ def _lexical_rowids(
     limit: int,
     variants: list[str] | None = None,
     expanded: str | None = None,
+    want: int = 1,
 ) -> tuple[list[int], str]:
     """rowids por BM25 com recuo (M-01): todos os termos -> substrings (trigramas, M-04) -> qualquer termo.
 
     Em cada modo tenta a consulta original e depois a traduzida pelo glossário; o "or" usa o texto expandido.
-    Devolve (rowids em ordem, modo usado; "+glossary" quando foi a variante do glossário).
+    Enquanto houver menos que `want` trechos (os que serão mostrados), o passo seguinte completa a lista, sempre
+    depois dos anteriores: "dsidph" citado num documento não esconde as definições que só casam por substring.
+    Devolve (rowids em ordem, modos usados unidos por "+"; "glossary" quando a variante do glossário contribuiu).
     """
     weights = ", ".join(str(w) for w in BM25_WEIGHTS)
     variants = variants or [query]
     tri = has_table(con, "chunks_tri")
     attempts = [(m, v) for m in ("and", "trigram") for v in variants] + [("or", expanded or query)]
+    found: list[int] = []
+    modes: list[str] = []
+    glossary_used = False
     for mode, text in attempts:
+        if len(found) >= want:
+            break  # um passo do recuo já encheu o que será mostrado
         match = sanitize_query(text, mode)
         if not match or (mode == "trigram" and not tri) or (mode == "or" and len(lexical_tokens(text)) < 2):
             continue
@@ -1320,9 +1329,13 @@ def _lexical_rowids(
             if "interrupt" in str(e):
                 raise
             rows = []
-        if rows:
-            return rows, mode + ("+glossary" if text != query else "")
-    return [], ""
+        new = [r for r in rows if r not in found]
+        if new:
+            found += new
+            if mode not in modes:
+                modes.append(mode)
+            glossary_used = glossary_used or text != query
+    return found[:limit], "+".join(modes + (["glossary"] if glossary_used and modes else []))
 
 
 SEMANTIC_WEIGHT = 0.8  # peso da lista semântica na fusão (BM25 = 1.0): o termo exato vence o empate

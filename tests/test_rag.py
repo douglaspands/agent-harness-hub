@@ -49,6 +49,13 @@ class TestSearchQuality(unittest.TestCase):
         self.assertEqual(q["mode"], "trigram")
         self.assertEqual(q["results"][0]["path"], "phy-inno-dsidphy.c")
 
+    def test_few_whole_word_hits_are_completed_by_substring(self) -> None:
+        """Um documento que cita "dsidph" não pode esconder as definições que só casam por substring."""
+        (self.root / "notas-ctx.md").write_text("# Busca\nO termo `dsidph` não achava nada.\n", encoding="utf-8")
+        q = self.query("dsidph")
+        self.assertEqual(q["mode"], "and+trigram")
+        self.assertEqual([r["path"] for r in q["results"]][:2], ["notas-ctx.md", "phy-inno-dsidphy.c"])
+
     def test_natural_language_falls_back_to_any_term(self) -> None:
         q = self.query("factory dtb backlight pwms")
         self.assertEqual(q["mode"], "or")
