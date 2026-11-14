@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -110,6 +111,7 @@ class TestEndToEnd(unittest.TestCase):
         out = subprocess.run(
             [sys.executable, str(WORKSPACE_ROOT / "scripts" / "guardrail.py")],
             input=json.dumps(payload), capture_output=True, text=True, check=True,
+            env={**os.environ, "CTX_EVENTS_LOG": "0"},  # bloqueios de teste não entram nas métricas do repo
         )
         return json.loads(out.stdout)
 

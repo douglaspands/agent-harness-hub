@@ -40,6 +40,11 @@ DEFAULTS: dict[str, Any] = {
         # "off": busca nunca escreve no índice (padrão) | "incremental": atualiza dentro de um orçamento de tempo
         "refresh": "off",
         "refresh_budget_ms": 300,
+        # Grupos de termos equivalentes do projeto, ex.: [["painel", "panel"], ["luz de fundo", "backlight"]] (M-11)
+        "glossary": [],
+        # Semântica híbrida (M-05): só vale com o extra `semantic` instalado; o modelo é baixado no `ctx index`
+        "semantic": True,
+        "semantic_model": "minishlab/potion-base-8M",
     },
     "doctor": {
         "wal_max_mb": 64,
@@ -74,6 +79,7 @@ DEFAULTS: dict[str, Any] = {
         "copy-verify": {
             "description": "Copia origem -> destino (arquivo), sincroniza o disco e confere o sha256: tudo numa chamada",
             "params": ["origem", "destino"],
+            "requires": ["cp", "sync", "sha256sum"],  # o `ctx init` coloca no commands.allow gerado (M-07)
             "steps": [
                 "cp {origem} {destino}",
                 "sync",
@@ -94,6 +100,7 @@ DEFAULTS: dict[str, Any] = {
             "tokens_per_call": 250,       # custo médio de uma chamada de ferramenta evitada (pedido + resultado + turno)
             "recall_hit_calls": 2,        # chamadas que um acerto de recall/fato costuma evitar (redescobrir + reexecutar)
             "search_adoption_ok": 0.5,    # fração de buscas via ctx (vs rg/grep/sed) para "compensa"
+            "confident_sessions": 30,     # abaixo disso o veredito sai como "provisório"
         },
     },
 }

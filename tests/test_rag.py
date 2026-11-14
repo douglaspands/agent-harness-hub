@@ -20,6 +20,114 @@ from ctx.rag import (
 )
 
 
+class TestSearchQuality(unittest.TestCase):
+    """M-01, M-02, M-04, M-06, M-11: recuo da consulta, trigramas, glossário, palavras vazias e prévia."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        (self.root / ".ctx").mkdir()
+        (self.root / "phy-inno-dsidphy.c").write_text(
+            "/* licença */\n" * 40 + "static int inno_dsidphy_init(void)\n{\n\treturn lane_mbps;\n}\n", encoding="utf-8"
+        )
+        (self.root / "board.dts").write_text("backlight: backlight {\n\tpwms = <&pwm1 0 25000 0>;\n};\n", encoding="utf-8")
+        (self.root / "notas.md").write_text("# Painel\nO painel fica cinza sem vídeo.\n", encoding="utf-8")
+        (self.root / "dados.jsonl").write_text('{"k": "' + "x" * 500 + ' marcador"}\n', encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def query(self, q: str, **kw: object) -> dict:
+        return search_many([q], workspace_root=self.root, **kw)["queries"][0]  # type: ignore[arg-type]
+
+    def test_all_terms_first(self) -> None:
+        q = self.query("backlight pwms")
+        self.assertEqual((q["mode"], q["results"][0]["path"]), ("and", "board.dts"))
+
+    def test_substring_of_identifier_falls_back_to_trigrams(self) -> None:
+        q = self.query("dsidph")
+        self.assertEqual(q["mode"], "trigram")
+        self.assertEqual(q["results"][0]["path"], "phy-inno-dsidphy.c")
+
+    def test_few_whole_word_hits_are_completed_by_substring(self) -> None:
+        """Um documento que cita "dsidph" não pode esconder as definições que só casam por substring."""
+        (self.root / "notas-ctx.md").write_text("# Busca\nO termo `dsidph` não achava nada.\n", encoding="utf-8")
+        q = self.query("dsidph")
+        self.assertEqual(q["mode"], "and+trigram")
+        self.assertEqual([r["path"] for r in q["results"]][:2], ["notas-ctx.md", "phy-inno-dsidphy.c"])
+
+    def test_natural_language_falls_back_to_any_term(self) -> None:
+        q = self.query("factory dtb backlight pwms")
+        self.assertEqual(q["mode"], "or")
+        self.assertEqual(q["results"][0]["path"], "board.dts")
+
+    def test_stopwords_do_not_break_all_terms(self) -> None:
+        self.assertEqual(sanitize_query("onde o painel fica cinza"), '"painel" "cinza"')
+        self.assertEqual(sanitize_query("the"), '"the"')  # só palavras vazias: mantém
+        self.assertEqual(sanitize_query("x y", "or"), '"x" OR "y"')
+        self.assertEqual(sanitize_query("ab dsidph", "trigram"), '"dsidph"')
+        self.assertEqual(self.query("o painel com vídeo")["mode"], "and")
+
+    def test_glossary_translates_and_reports(self) -> None:
+        (self.root / "policy.toml").write_text('[search]\nglossary = [["luz de fundo", "backlight"]]\n', encoding="utf-8")
+        q = self.query("luz de fundo", path_prefix="board.dts")
+        self.assertEqual(q["results"][0]["path"], "board.dts")  # "luz de fundo" não aparece no DTS
+        self.assertTrue(q["mode"].endswith("+glossary"))
+        self.assertEqual(q["glossary"], ["luz de fundo → backlight"])
+
+    def test_preview_centered_on_match_and_long_lines_cut(self) -> None:
+        r = self.query("lane_mbps", lines=5)["results"][0]
+        first = int(r["preview"].splitlines()[0].split()[0])
+        self.assertEqual(first, 40)  # 3 linhas antes da linha 43 (lane_mbps): pulou o cabeçalho de licença
+        self.assertIn("lane_mbps", r["preview"])
+        line = self.query("marcador", lines=3)["results"][0]["preview"]
+        self.assertIn("…(+", line)
+        self.assertLess(len(line), 260)
+
+
+class TestFileName(unittest.TestCase):
+    """M-26: o nome do arquivo pesa no ranking; com refresh incremental, resultados desatualizados são reindexados."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        (self.root / ".ctx").mkdir()
+        pkg = self.root / "src" / "r36os"
+        pkg.mkdir(parents=True)
+        (pkg / "push.py").write_text(
+            '"""Update a console over the USB cable: `r36os push`."""\n\n\ndef run(args):\n    return sync(args)\n',
+            encoding="utf-8",
+        )
+        # concorrentes que repetem "push" e "r36os" no conteúdo e no título
+        (pkg / "services.py").write_text(
+            '"""r36os services: push, push, push."""\n\n\ndef push_service(r36os):\n    """push the r36os push service."""\n',
+            encoding="utf-8",
+        )
+        (self.root / "notes.md").write_text("# r36os push\n\nr36os push push push over ssh.\n", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_module_named_after_a_query_term_comes_first(self) -> None:
+        top = search_many(["r36os push"], workspace_root=self.root)["queries"][0]["results"][0]
+        self.assertEqual(top["path"], "src/r36os/push.py")
+
+    def test_stale_results_are_reindexed_with_incremental_refresh(self) -> None:
+        from unittest import mock
+
+        index_workspace(self.root)
+        (self.root / "notes.md").write_text("# r36os push\n\nzanzibar novo conteúdo.\n", encoding="utf-8")
+        quiet = {"reindexed": False, "repaired": False, "warnings": []}
+        with mock.patch("ctx.rag.ensure_current", return_value=quiet):
+            off = search_many(["r36os push"], workspace_root=self.root)
+            self.assertTrue(any("mudaram desde a indexação" in w for w in off["warnings"]))
+            (self.root / "policy.toml").write_text('[search]\nrefresh = "incremental"\n', encoding="utf-8")
+            res = search_many(["r36os push"], workspace_root=self.root)
+        self.assertFalse(any("mudaram desde a indexação" in w for w in res["warnings"]))
+        z = search_many(["zanzibar"], workspace_root=self.root)["queries"][0]
+        self.assertEqual(z["results"][0]["path"], "notes.md")
+
+
 class TestRAG(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -76,6 +184,20 @@ Especificação técnica.
         f = self.workspace / "g.md"
         titles = [c.title for c in extract_markdown_chunks(f, "g.md", md)]
         self.assertEqual(titles, ["Guia", "Seção Real"])
+
+    def test_long_markdown_section_is_split_keeping_the_title(self) -> None:
+        """M-13: seção longa vira partes por item de lista/parágrafo, todas com o título da seção."""
+        items = "\n".join(f"- item {i}: texto da tarefa {i}" for i in range(150))
+        md = f"# Tarefas\n\n{items}\n\n## Curta\nok\n"
+        f = self.workspace / "tasks.md"
+        chunks = extract_markdown_chunks(f, "tasks.md", md)
+        tarefas = [c for c in chunks if c.title.startswith("Tarefas")]
+        self.assertGreaterEqual(len(tarefas), 3)
+        self.assertEqual(tarefas[1].title, "Tarefas (parte 2)")
+        self.assertTrue(all(c.end_line - c.start_line + 1 <= 60 for c in tarefas))
+        self.assertTrue(all(c.content.startswith("- item") for c in tarefas[1:]))  # corta no item, não no meio
+        self.assertEqual(sum(c.content.count("- item") for c in tarefas), 150)  # nada se perde
+        self.assertEqual(chunks[-1].title, "Curta")
 
     def test_sanitize_query(self) -> None:
         q = "guardrail; rm -rf / 'teste' \"palavra\""

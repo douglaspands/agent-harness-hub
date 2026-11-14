@@ -254,6 +254,20 @@ class TestPolicyMerge(unittest.TestCase):
             tomllib.loads(new)
             self.assertEqual(set(added), set(SECTIONS))
 
+    def test_v04_policy_gets_the_new_key_hints(self) -> None:
+        """Projeto 0.4 já tem os blocos de [search]/[metrics]: o upgrade 0.5 só acrescenta as dicas das chaves novas."""
+        v04 = OLD_POLICY + "\n# --- ctx 0.4.0: seções novas ---\n" + "\n".join(
+            SECTIONS[n][1] for n in ("index", "search", "doctor", "upstream", "recall", "recipes", "metrics")
+        )
+        new, added = upgraded_text(v04, __version__)
+        self.assertEqual(added, ["search-quality", "paths-readonly", "metrics-confidence"])
+        self.assertIn("readonly_commands", new)
+        self.assertEqual(tomllib.loads(new), tomllib.loads(v04))  # só comentários
+
+    def test_user_defined_key_skips_the_hint(self) -> None:
+        text = OLD_POLICY + '\n[search]\nglossary = [["a", "b"]]\n'
+        self.assertNotIn("search-quality", upgraded_text(text, __version__)[1])
+
     def test_missing_policy_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(upgrade_policy(Path(d), __version__)["status"], "ausente")

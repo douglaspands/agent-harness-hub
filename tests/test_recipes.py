@@ -40,6 +40,23 @@ class RecipeBase(unittest.TestCase):
         (self.root / "policy.toml").write_text(text, encoding="utf-8")
 
 
+class TestRequires(RecipeBase):
+    """M-07: a receita declara os comandos de que precisa; a lista e o needs_confirmation apontam os que faltam."""
+
+    def test_missing_requires_are_listed(self) -> None:
+        self.write_policy(policy(allow='allow = ["git status", "sync"]'))
+        row = {r["name"]: r for r in list_recipes(self.root)}["copy-verify"]
+        self.assertEqual(row["requires"], ["cp", "sync", "sha256sum"])
+        self.assertEqual(row["missing"], ["cp", "sha256sum"])
+        res = run_recipe(self.root, "copy-verify", ["origem.txt", "d.txt"])
+        self.assertEqual(res["status"], "needs_confirmation")
+        self.assertEqual(res["missing_requires"], ["cp", "sha256sum"])
+
+    def test_nothing_missing_with_default_allow(self) -> None:
+        self.write_policy(policy())
+        self.assertEqual({r["name"]: r for r in list_recipes(self.root)}["copy-verify"]["missing"], [])
+
+
 class TestCopyVerify(RecipeBase):
     def test_copies_syncs_verifies_in_one_call(self) -> None:
         self.write_policy(policy())

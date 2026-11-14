@@ -74,7 +74,22 @@ def render_policy(target: Path, runner: str) -> str:
     text = text.replace('name = "meu-projeto"', f'name = "{target.name}"', 1)
     if runner != DEFAULT_RUNNER:
         text = text.replace(DEFAULT_RUNNER, runner)
-    return text
+    return with_recipe_requires(text)
+
+
+def with_recipe_requires(text: str) -> str:
+    """Põe no `allow = [` gerado os comandos que as receitas embutidas declaram em `requires` (M-07)."""
+    from ctx.config import DEFAULTS
+
+    needed: list[str] = []
+    for recipe in DEFAULTS["recipes"].values():
+        for req in recipe.get("requires", []):
+            if f'    "{req}",\n' not in text and req not in needed:
+                needed.append(req)
+    if not needed:
+        return text
+    lines = "".join(f'    "{req}",  # receita embutida copy-verify\n' for req in needed)
+    return text.replace("allow = [\n", "allow = [\n" + lines, 1)
 
 
 def render_skill(runner: str) -> str:

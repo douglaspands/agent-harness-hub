@@ -55,12 +55,14 @@ def humanize_age(seconds: int) -> str:
 
 
 def cmd_index(args: argparse.Namespace) -> int:
-    res = index_workspace(force=args.force)
+    res = index_workspace(force=args.force, download=True)  # só o `ctx index` baixa o modelo semântico
     print(f"✓ Indexação concluída em {res['elapsed_ms']}ms:")
     print(f"  • Arquivos indexados/atualizados: {res['indexed']}")
     print(f"  • Arquivos inalterados (pulados): {res['skipped']}")
     print(f"  • Total de arquivos rastreados: {res['total']}")
     print(f"  • WAL após consolidar: {res['wal_bytes']} bytes")
+    for note in res.get("notes", []):
+        print(f"ℹ {note}")
     return 0
 
 
@@ -107,6 +109,14 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+SEARCH_MODE_LABEL = {
+    "and": "",
+    "trigram": " · por substring (trigramas)",
+    "or": " · com qualquer termo",
+    "semantic": " · só por semelhança (nenhum termo casou)",
+}
+
+
 def cmd_search(args: argparse.Namespace) -> int:
     try:
         res = search_many(args.queries, top_k=args.top, path_prefix=args.path, lines=args.lines, timeout=args.timeout, scope=args.scope)
@@ -119,16 +129,19 @@ def cmd_search(args: argparse.Namespace) -> int:
         print(f"⚠ {w}")
 
     for q in res["queries"]:
-        print(f"\n═══ '{q['query']}' — {q['count']} resultados ═══")
+        label = "".join(SEARCH_MODE_LABEL.get(m, "") for m in q.get("mode", "").split("+"))
+        if q.get("glossary"):
+            label += f" · glossário: {'; '.join(q['glossary'])}"
+        print(f"\n═══ '{q['query']}' — {q['count']} resultados{label} ═══")
         if q["timed_out"]:
             print(f"⏱ Tempo esgotado. Equivalente com rg: {q['rg']}")
         if not q["results"]:
             if not q["timed_out"]:
-                print("Nenhum resultado encontrado no índice FTS5.")
+                print("Nenhum resultado encontrado no índice.")
             continue
         for i, r in enumerate(q["results"], start=1):
             tag = "" if r["kind"] == "code" else f" [{r['kind']}]"
-            print(f"\n[{i}] {r['slice']}{tag} — {r['title']} ({r['chunk_type']}, BM25 {r['score']})")
+            print(f"\n[{i}] {r['slice']}{tag} — {r['title']} ({r['chunk_type']}, {r.get('via', 'bm25')} {r['score']})")
             if r["preview"]:
                 print(r["preview"])
             else:
@@ -309,9 +322,13 @@ def cmd_fact(args: argparse.Namespace) -> int:
 
 def cmd_recipe(args: argparse.Namespace) -> int:
     if args.recipe_cmd == "list":
-        rows = [[r["name"], " ".join(f"<{p}>" for p in r["params"]) or "-", str(r["steps"]), r["description"]] for r in list_recipes(WORKSPACE_ROOT)]
+        recipes = list_recipes(WORKSPACE_ROOT)
+        rows = [[r["name"], " ".join(f"<{p}>" for p in r["params"]) or "-", str(r["steps"]), r["description"]] for r in recipes]
         print("🍳 Receitas (`ctx recipe run <nome> [args]`):\n")
         print(format_table(rows, ["Nome", "Argumentos", "Etapas", "Descrição"]))
+        for r in recipes:
+            if r["missing"]:
+                print(f"\n⚠ '{r['name']}' precisa de {', '.join(r['missing'])} em commands.allow do policy.toml para rodar sem --yes.")
         return 0
     try:
         res = run_recipe(WORKSPACE_ROOT, args.name, args.args, yes=args.yes, step_timeout=args.timeout)
@@ -330,6 +347,8 @@ def cmd_recipe(args: argparse.Namespace) -> int:
         print(f"✋ Receita '{args.name}': {len(res['pending'])} etapa(s) não liberadas pelo guardrail — nada foi executado:")
         for p in res["pending"]:
             print(f"   etapa {p['step']} [{p['decision']}] `{p['command']}` — {p['reason']}")
+        if res.get("missing_requires"):
+            print(f"   A receita declara que precisa de {', '.join(res['missing_requires'])} em commands.allow.")
         print("   Se o usuário aprovar, reexecute com --yes (o guardrail pedirá a confirmação dele) ou adicione os comandos a commands.allow no policy.toml.")
     else:
         icon = "✅" if res["status"] == "ok" else "❌"
@@ -413,6 +432,11 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         f"(instruções {o['overhead_tokens_per_session']}/sessão + bloqueios {o['denial_waste_tokens']})"
     )
     print(f"   saldo líquido estimado: {o['net_tokens']} tokens ({o['net_tokens_per_session']}/sessão)  [tokens = estimativa chars/4]")
+    if o.get("confidence") == "provisório" and o["verdict"] != "sem dados":
+        print("   ⚠️  veredito PROVISÓRIO: poucas sessões para decidir (ver recomendação)")
+    if o.get("denial_rules"):
+        print(f"\nBloqueios por regra ({o['denial_repeats']} repetidos na mesma sessão = coaching que não ensinou):")
+        print(format_table([[r["count"], f"~{r['tokens']}", r["rule"]] for r in o["denial_rules"][:8]], ["Vezes", "Tokens", "Regra"]))
     print("\nPor recurso:")
     print(format_table([[f"{VERDICT_ICON[f['verdict']]} {f['verdict']}", f["feature"], f["evidence"]] for f in res["features"]], ["Veredito", "Recurso", "Evidência"]))
     if res["models"]:

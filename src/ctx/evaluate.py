@@ -99,9 +99,12 @@ def evaluate_features(data: dict[str, Any], sessions: list[dict[str, Any]], cfg:
     else:
         adoption = uses / (uses + detours)
         v = COMPENSA if adoption >= cfg["search_adoption_ok"] else MARGINAL if adoption >= 0.2 else NAO
+        # por sessão separa "não usa" de "usa pouco" (M-22)
+        search_n = sum(1 for s in sessions if s["ctx_search"])
         out.append(verdict_feature(
             "busca e índice", v,
-            f"{uses} buscas ctx vs {detours} desvios rg/grep/sed (adoção {adoption:.0%}); {saved} chamadas poupadas por multi-query{lat_note}",
+            f"{uses} buscas ctx vs {detours} desvios rg/grep/sed (adoção {adoption:.0%} por chamada; {search_n}/{n} sessões "
+            f"usaram `ctx search`, {ctx_n}/{n} algum comando do ctx); {saved} chamadas poupadas por multi-query{lat_note}",
             saved,
         ))
 
@@ -222,6 +225,23 @@ def recommendations(features: list[dict[str, Any]], overall: dict[str, Any], n: 
         recs.append("Há fatos que nunca são consultados: remova os obsoletos (`ctx fact stale`) e peça `ctx fact search` antes de redescobrir valores.")
     if by["upstream em cache"]["verdict"] == NAO:
         recs.append("Há re-downloads manuais: declare o projeto em `[upstream.<nome>]` do policy.toml para passar a usar `ctx upstream get`.")
+    if by["fatos verificados"]["verdict"] == SEM_DADOS and n >= cfg["min_sessions"]:
+        recs.append(
+            "Nenhum fato registrado: o que custou caro descobrir deve entrar com "
+            "`ctx fact add \"<fato>\" --source arquivo:linha --tags a,b` (ex.: um valor medido, a causa de um bug, a URL "
+            "de um patch, o comando de build que funcionou), para o `recall` não depender só do transcript."
+        )
+    if overall.get("confidence") == "provisório" and overall["verdict"] != SEM_DADOS:
+        recs.append(
+            f"Veredito provisório: {n} sessões (confiança a partir de {cfg['confident_sessions']}); repita o "
+            "`ctx evaluate` depois de mais sessões antes de desligar um recurso."
+        )
+    top = overall.get("denial_rules", [])[:1]
+    if top and overall.get("denial_repeats", 0) and top[0]["count"] > 1:
+        recs.append(
+            f"A regra `{top[0]['rule']}` é o bloqueio mais caro ({top[0]['count']}x, ~{top[0]['tokens']} tokens) e "
+            f"{overall['denial_repeats']} bloqueios se repetiram na mesma sessão: o agente não aprendeu com a mensagem."
+        )
     if by["receitas"]["verdict"] == NAO:
         recs.append("Receitas ignoradas ou sem ganho: use `ctx recipe list`, ajuste as etapas no policy.toml ou remova as que ninguém usa.")
     if by["coaching do guardrail"]["verdict"] == NAO:
@@ -267,8 +287,19 @@ def evaluate(
         verdict = MARGINAL
     else:
         verdict = NAO
+    # o veredito leva a confiança: abaixo de `confident_sessions` é só provisório (M-20)
+    confidence = "ok" if n >= cfg["confident_sessions"] else "provisório"
+    # custo dos bloqueios por regra; repetidos na mesma sessão = coaching que não ensinou (M-19)
+    rules: dict[str, int] = {}
+    for s in sessions:
+        for rule, count in s.get("denial_rules", {}).items():
+            rules[rule] = rules.get(rule, 0) + count
+    denial_rules = [
+        {"rule": r, "count": c, "tokens": c * cfg["tokens_per_call"]} for r, c in sorted(rules.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
     overall = {
-        "verdict": verdict, "sessions": n,
+        "verdict": verdict, "confidence": confidence, "sessions": n,
+        "denial_rules": denial_rules, "denial_repeats": sum(s.get("denial_repeats", 0) for s in sessions),
         "saved_calls": saved_calls, "saved_tokens": saved_tokens,
         "saved_tokens_per_session": round(saved_tokens / n) if n else 0,
         "overhead_tokens_per_session": overhead["per_session"],

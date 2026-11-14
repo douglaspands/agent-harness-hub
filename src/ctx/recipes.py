@@ -9,6 +9,8 @@ Declaradas no `policy.toml` (`[recipes.<nome>]`) ou embutidas e genéricas (`cop
 - roda sem shell, com timeout, e a saída volta resumida (código, duração, últimas linhas).
 
 Formato de etapa: string (comando) ou tabela `{run, capture}` (guarda a 1ª palavra da saída), `{check = "equal", a, b}`.
+`requires = ["cp", ...]` declara os comandos de que a receita precisa: `ctx recipe list` mostra os que faltam em
+`commands.allow`, e o `ctx init` já coloca os das receitas embutidas no `allow` gerado.
 
 100% biblioteca padrão.
 """
@@ -39,13 +41,25 @@ def load_recipes(workspace_root: Path) -> dict[str, dict[str, Any]]:
     return {name: r for name, r in recipes.items() if isinstance(r, dict)}
 
 
+def missing_requires(recipe: dict[str, Any], policy: dict[str, Any]) -> list[str]:
+    """Comandos que a receita declara em `requires` e que `commands.allow` não libera (M-07)."""
+    allow = [str(a) for a in policy.get("commands", {}).get("allow", [])]
+    return [
+        req for req in recipe.get("requires", [])
+        if not any(req == a or req.startswith(a + " ") for a in allow)
+    ]
+
+
 def list_recipes(workspace_root: Path) -> list[dict[str, Any]]:
+    policy = load_raw_policy(workspace_root)
     return [
         {
             "name": name,
             "description": r.get("description", ""),
             "params": list(r.get("params", [])),
             "steps": len(r.get("steps", [])),
+            "requires": list(r.get("requires", [])),
+            "missing": missing_requires(r, policy),
         }
         for name, r in sorted(load_recipes(workspace_root).items())
     ]
@@ -140,6 +154,7 @@ def run_recipe(
             "status": "needs_confirmation",
             "executed": 0,
             "pending": [{"step": p["n"], "command": shlex.join(p["argv"]), "decision": p["decision"], "reason": p["reason"]} for p in pending],
+            "missing_requires": missing_requires(recipe, load_raw_policy(workspace_root)),
         }
 
     captures: dict[str, str] = {}

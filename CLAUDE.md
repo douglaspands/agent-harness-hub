@@ -40,6 +40,7 @@ Este repositório é gerenciado pelo **motor `ctx`** com governança multi-harne
 ### 4. Comandos Atômicos (sem encadeamento shell)
 - É **proibido** encadear comandos shell com `&&`, `||`, `;`, `&`, subshells `$()` ou backticks: o guardrail recusa (`deny`).
 - Execute **um comando por chamada**, para que cada um seja avaliado e auditado sozinho.
+- Script para outra máquina ou shell (`ssh host '…'`, `sh -c '…'`) vai inteiro em **aspas simples**: só as regras destrutivas valem dentro dele.
 
 ### 5. Política Container-First e Armazenamento Btrfs
 - **Container-First**: Para utilitários ou bancos de dados temporários (PostgreSQL, Redis, etc.), utilize containers efêmeros rootless (`podman run --rm` ou `docker run --rm`). NUNCA instale pacotes no host sem confirmação explícita.

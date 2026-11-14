@@ -13,7 +13,7 @@ Esta skill instrui o agente a operar com máxima eficiência de contexto, acerta
 - No **Turno 1**, use o motor `ctx` (`.venv/bin/ctx` ou `uv run ctx`), em chamadas paralelas no mesmo turno quando fizer sentido:
   - `.venv/bin/ctx status` — Git (`status -s -b`), changes OpenSpec ativas com progresso `X/Y` e próximas tarefas, saúde do índice (tamanho, arquivos, idade, escopo) e do cache.
   - `.venv/bin/ctx map [subcaminhos...]` — mapa estrutural (oculta `openspec/changes/archive/`; use `--include-archive` se precisar).
-  - `.venv/bin/ctx search "<q1>" "<q2>" --lines 25 [--path src]` — várias queries numa chamada, com 25 linhas de preview por resultado.
+  - `.venv/bin/ctx search "<q1>" "<q2>" --lines 25 [--path src]` — várias queries numa chamada, com 25 linhas de preview por resultado. Pedaço de identificador (`lane_mb`) e pergunta em linguagem natural também funcionam: sem trecho com todos os termos, a busca recua para substring e depois para qualquer termo (o modo aparece no cabeçalho).
 - O retorno `arquivo:inicio-fim` indica exatamente o que ler; leia só esse intervalo quando o preview não bastar.
 
 ## 2. Ferramentas, Toolchains Sandbox-Safe e Receitas One-Shot
@@ -30,7 +30,8 @@ Esta skill instrui o agente a operar com máxima eficiência de contexto, acerta
 
 ## 4. Comandos Atômicos (sem encadeamento shell)
 - Comandos com `&&`, `||`, `;`, `&`, subshells `$()` ou backticks são rejeitados (`deny`) pelo guardrail.
-- Execute um comando por chamada, para que cada um seja avaliado e auditado sozinho. Rotina de várias etapas que se repete? Use uma receita (seção 7).
+- Execute um comando por chamada, para que cada um seja avaliado e auditado sozinho: os independentes em chamadas paralelas no mesmo turno, os dependentes em turnos seguintes; em vez de `cd X && cmd`, caminho absoluto ou `git -C X`. Rotina de várias etapas que se repete? Use uma receita (seção 7).
+- Script para outra máquina ou shell vai inteiro em aspas simples (`ssh host 'a ; b'`, `podman run --rm img sh -c 'a && b'`): só as regras destrutivas valem dentro dele. Em aspas duplas, `$(…)` roda na máquina local e é recusado.
 
 ## 5. Ferramentas Nativas de Arquivo
 - Leia, edite e crie arquivos com as ferramentas do harness (Claude Code: `Read`/`Edit`/`Write`; Gemini CLI: `read_file`/`replace`/`write_file`; Codex: `apply_patch` para escrever), não com `cat`/`head`/`sed -n` nem `sed -i`/`>`/heredoc/`tee`.
@@ -42,7 +43,7 @@ Esta skill instrui o agente a operar com máxima eficiência de contexto, acerta
 
 ## 7. Índice saudável, memória, upstream e receitas
 - **Busca nunca trava**: `ctx search` não escreve no índice e para em 3 s (`--timeout`); ao estourar devolve o `rg` equivalente pronto — rode-o. Avisos `⚠ ... mudaram desde a indexação` pedem `ctx index`. Se algo parecer lento ou estranho: `ctx doctor`, e se falhar `ctx doctor --fix` (checkpoint do WAL, VACUUM, reindex).
-- **Escopo**: o índice respeita `.gitignore`, ignora binários, arquivos grandes e diretórios de build/cache/venv. Material de referência fora do git entra por `[index.reference]` no `policy.toml`; filtre com `ctx search --scope code|reference|upstream`. Arquivos `.patch`/`.diff` são indexados com arquivos tocados, símbolos adicionados e hunks.
+- **Escopo**: o índice respeita `.gitignore`, ignora binários, arquivos grandes e diretórios de build/cache/venv. Material de referência fora do git entra por `[index.reference]` no `policy.toml`; filtre com `ctx search --scope code|reference|upstream`. Arquivos `.patch`/`.diff` são indexados com arquivos tocados, símbolos adicionados e hunks; C/H por função/struct (extra `c`) e DTS/DTSI por nó. Termos equivalentes do projeto (PT/EN, apelidos) vão em `[search].glossary`; com o extra `semantic`, a busca também acha por semelhança.
 - **Sessão retomada ou contexto compactado?** Antes de reabrir arquivos ou repetir comandos, consulte a memória local: `ctx recall "<pergunta>"` (ex.: `"último comando de build que deu certo"`, `"URL usada para o patch X"`) e `ctx fact search "<termo>"`. Nada sai da máquina.
 - **Registre o que custou caro descobrir**: `ctx fact add "<fato>" --source arquivo:linha|url --tags a,b` (valores medidos, decisões, armadilhas). `ctx fact stale` lista fatos cuja fonte mudou depois. Candidatos automáticos do fim da sessão: `ctx fact review`.
 - **Fontes upstream**: `ctx upstream get <projeto> <versão> <caminho>` baixa uma única vez para `.ctx/upstream/<projeto>/<versão>/<caminho>`, indexa e devolve o caminho local — leia com `Read`; não baixe de novo à mão. Projetos e URLs ficam em `[upstream.*]` no `policy.toml`.

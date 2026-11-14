@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 # Versão do motor `ctx` que gerou este arquivo: `ctx doctor` compara com a versão instalada e pede `ctx upgrade`.
-KIT_VERSION = "0.4.0"
+KIT_VERSION = "0.5.0"
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 POLICY_PATH = WORKSPACE_ROOT / "policy.toml"
@@ -177,6 +177,228 @@ def has_chaining_operators(cmd: str) -> bool:
 
 
 # --------------------------------------------------------------------------------------
+# Padrões destrutivos casados com o argv (M-24) e scripts citados para outro shell (M-25)
+# --------------------------------------------------------------------------------------
+
+# Entradas conhecidas de commands.deny -> regra estrutural (o texto continua sendo o rótulo da mensagem).
+# As regras estruturais valem sempre; entradas desconhecidas casam como prefixo do argv de cada comando.
+KNOWN_DENY = {
+    "rm -rf /": "rm",
+    "mkfs": "mkfs",
+    ":(){ :|:& };:": "forkbomb",
+    "curl | bash": "pipe-shell",
+    "wget | bash": "pipe-shell",
+    "curl | sh": "pipe-shell",
+    "wget | sh": "pipe-shell",
+}
+RULE_LABELS = {"rm": "rm -rf /", "mkfs": "mkfs", "forkbomb": ":(){ :|:& };:", "pipe-shell": "curl | bash"}
+SYSTEM_DIRS = {
+    "/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64", "/opt", "/proc", "/root", "/sbin",
+    "/srv", "/sys", "/usr", "/var",
+}
+HOME_TARGETS = {"~", "$HOME", "${HOME}"}
+SHELL_NAMES = {"sh", "bash", "zsh", "dash", "ash", "ksh"}
+# Prefixos que só repassam o comando (o programa real vem depois deles e das opções deles)
+PASSTHROUGH = {"sudo", "doas", "run0", "pkexec", "exec", "env", "nice", "nohup", "command", "time", "timeout", "stdbuf", "ionice"}
+_OPT_WITH_VALUE = {
+    "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U", "-T"},
+    "doas": {"-u", "-C"},
+    "nice": {"-n"},
+    "ionice": {"-c", "-n", "-p"},
+    "env": {"-u", "-C", "-S"},
+}
+_SSH_OPT_WITH_VALUE = set("BbcDEeFIiJLlmOoPpQRSWw")
+_ASSIGNMENT_RE = re.compile(r"[A-Za-z_]\w*=")
+SEPARATORS = CHAIN_TOKENS | {"|"}
+
+
+def strip_passthrough(argv: list[str]) -> list[str]:
+    """Tira `VAR=x`, `sudo -u u`, `env`, `timeout 5`… do início: o que sobra começa no programa real."""
+    i = 0
+    while i < len(argv):
+        word = argv[i].lstrip("`")
+        name = Path(word).name
+        if _ASSIGNMENT_RE.match(word):
+            i += 1
+            continue
+        if name not in PASSTHROUGH:
+            break
+        i += 1
+        while i < len(argv) and argv[i].startswith("-") and argv[i] != "--":
+            opt = argv[i]
+            i += 1
+            if opt in _OPT_WITH_VALUE.get(name, ()) and i < len(argv):
+                i += 1
+        if i < len(argv) and argv[i] == "--":
+            i += 1
+        if name == "timeout" and i < len(argv) and re.fullmatch(r"[\d.]+[smhd]?", argv[i]):
+            i += 1
+    out = argv[i:]
+    return [out[0].lstrip("`"), *out[1:]] if out else out
+
+
+def pipelines(tokens: list[str]) -> list[list[list[str]]]:
+    """Tokens -> pipelines (separadas por ; && || & ( )) -> comandos simples (separados por |), sem operadores."""
+    out: list[list[list[str]]] = [[[]]]
+    for t in tokens:
+        if t in SEPARATORS or (is_operator(t) and any(c in t for c in ";()") and ">" not in t and "<" not in t):
+            if t == "|" or t == "|&":
+                out[-1].append([])
+            else:
+                out.append([[]])
+        elif is_operator(t):
+            continue  # redirecionamento: o alvo fica como argumento, inofensivo para as regras abaixo
+        else:
+            out[-1][-1].append(t.rstrip("`") if t.endswith("`") and not t.startswith("`") else t)
+    return [[strip_passthrough(c) for c in p if c] for p in out if any(p)]
+
+
+def _rm_target_is_dangerous(arg: str) -> bool:
+    a = arg[:-2] if arg.endswith("/*") else arg
+    a = a.rstrip("/") or "/"
+    return a in SYSTEM_DIRS or a in HOME_TARGETS or a == os.path.expanduser("~").rstrip("/")
+
+
+def _rm_is_destructive(args: list[str]) -> bool:
+    recursive = False
+    targets: list[str] = []
+    options = True
+    for a in args:
+        if options and a == "--":
+            options = False
+        elif options and a.startswith("--"):
+            if a == "--no-preserve-root":
+                return True
+            recursive = recursive or a == "--recursive"
+        elif options and a.startswith("-") and len(a) > 1:
+            recursive = recursive or "r" in a[1:] or "R" in a[1:]
+        else:
+            targets.append(a)
+    return recursive and any(_rm_target_is_dangerous(t) for t in targets)
+
+
+def embedded_scripts(argv: list[str]) -> list[str]:
+    """Scripts que o comando entrega a outro shell: `sh -c '<s>'` (também dentro de podman/docker/sudo) e
+    `ssh [opções] host <s...>`."""
+    out: list[str] = []
+    if not argv:
+        return out
+    if Path(argv[0]).name == "ssh":
+        i = 1
+        while i < len(argv) and argv[i].startswith("-"):
+            opt = argv[i]
+            i += 1
+            if len(opt) == 2 and opt[1] in _SSH_OPT_WITH_VALUE and i < len(argv):
+                i += 1
+        if i + 1 < len(argv):
+            out.append(" ".join(argv[i + 1 :]))
+        return out
+    for i, word in enumerate(argv[:-1]):
+        if Path(word).name not in SHELL_NAMES:
+            continue
+        for j in range(i + 1, len(argv) - 1):
+            opt = argv[j]
+            if not opt.startswith("-") or opt.startswith("--"):
+                break
+            if "c" in opt[1:]:
+                out.append(argv[j + 1])
+                break
+    return out
+
+
+def destructive_rule(cmd: str, policy: dict[str, Any], depth: int = 0) -> tuple[str, str] | None:
+    """(regra, rótulo do padrão) se o comando (ou um script embutido nele) é destrutivo; senão None."""
+    deny_entries = [str(p) for p in policy.get("commands", {}).get("deny", [])]
+    if ":(){" in cmd.replace(" ", ""):
+        return "forkbomb", RULE_LABELS["forkbomb"]
+    tokens = tokenize(HARMLESS_REDIRECT_RE.sub(" ", cmd))
+    if tokens is None:
+        # Aspas que não fecham: conservador, substring como antes
+        for pat in deny_entries:
+            if pat in cmd:
+                return KNOWN_DENY.get(pat, "custom"), pat
+        return None
+    custom = [p for p in deny_entries if p not in KNOWN_DENY]
+    for pipe in pipelines(tokens):
+        names = [Path(c[0]).name for c in pipe if c]
+        for k, name in enumerate(names):
+            if name in ("curl", "wget") and any(n in SHELL_NAMES for n in names[k + 1 :]):
+                return "pipe-shell", RULE_LABELS["pipe-shell"]
+        for argv in pipe:
+            if not argv:
+                continue
+            name = Path(argv[0]).name
+            if name == "rm" and _rm_is_destructive(argv[1:]):
+                return "rm", RULE_LABELS["rm"]
+            if name.startswith("mkfs"):
+                return "mkfs", RULE_LABELS["mkfs"]
+            text = " ".join(argv)
+            for pat in custom:
+                if _prefix_match(text, pat) or (is_operator_text(pat) and pat in cmd):
+                    return "custom", pat
+            if depth < 4:
+                for script in embedded_scripts(argv):
+                    hit = destructive_rule(script, policy, depth + 1)
+                    if hit:
+                        return hit
+    return None
+
+
+def is_operator_text(pattern: str) -> bool:
+    """Padrão customizado com operadores de shell (ex.: 'a | b'): casa como substring, como antes."""
+    return any(ch in PUNCTUATION for ch in pattern)
+
+
+def _quoted_spans(cmd: str) -> list[tuple[int, int, str]]:
+    """(início, fim exclusivo, aspa) de cada trecho entre aspas simples ou duplas, fora de outras aspas."""
+    spans: list[tuple[int, int, str]] = []
+    i, n = 0, len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch in ("'", '"'):
+            j = i + 1
+            while j < n and cmd[j] != ch:
+                j += 2 if (ch == '"' and cmd[j] == "\\") else 1
+            if j >= n:
+                return spans  # aspas sem fechar: o tokenizador decide
+            spans.append((i, j + 1, ch))
+            i = j + 1
+            continue
+        i += 1
+    return spans
+
+
+_SHELL_C_PREFIX_RE = re.compile(
+    r"(?:^|[\s;&|(])(?:\S*/)?(?:" + "|".join(sorted(SHELL_NAMES)) + r")\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*c[A-Za-z]*\s+$"
+)
+_SSH_PREFIX_RE = re.compile(r"^\s*(?:(?:sudo|doas|exec|command|nice|nohup)\s+)*(?:\S*/)?ssh\s+(?:\S+\s+)*\S+\s+$")
+
+
+def mask_remote_scripts(cmd: str) -> tuple[str, bool]:
+    """Troca por um marcador o texto citado que vai para outro shell (`sh -c '…'`, `ssh host '…'`,
+    `podman run … sh -c '…'`): o encadeamento DENTRO dele não é local. Em aspas duplas, `$(…)` e crase
+    rodam na máquina local, então o trecho fica (e o encadeamento é recusado). Retorna (texto, houve_subst_local)."""
+    out: list[str] = []
+    pos = 0
+    local_subst = False
+    for start, end, quote in _quoted_spans(cmd):
+        prefix = "".join(out) + cmd[pos:start]
+        body = cmd[start + 1 : end - 1]
+        carrier = bool(_SHELL_C_PREFIX_RE.search(prefix) or _SSH_PREFIX_RE.match(prefix))
+        if carrier and quote == '"' and ("$(" in body or "`" in body):
+            local_subst = True
+            carrier = False
+        out.append(cmd[pos:start])
+        out.append("'__script__'" if carrier else cmd[start:end])
+        pos = end
+    out.append(cmd[pos:])
+    return "".join(out), local_subst
+
+
+# --------------------------------------------------------------------------------------
 # Caminhos
 # --------------------------------------------------------------------------------------
 
@@ -225,10 +447,39 @@ def matches_harness_allow(path: Path, policy: dict[str, Any]) -> bool:
 
 
 def matches_readonly_system(path: Path, policy: dict[str, Any]) -> bool:
+    """Caminhos só de leitura (paths.readonly_system); "~" é expandido e o "/**" no fim é opcional."""
     for ro in policy.get("paths", {}).get("readonly_system", []):
-        if is_within(path, Path(ro).resolve()):
+        ro = ro[:-3] if ro.endswith("/**") else ro
+        if is_within(path, resolve_path(ro)):
             return True
     return False
+
+
+# Comandos que só leem: um caminho de paths.readonly_system passado a eles é liberado mesmo dentro do
+# volume Btrfs No-COW (~/data), cujos outros acessos continuam pedindo confirmação.
+DEFAULT_READONLY_COMMANDS = ["rg", "ls", "fd", "sha256sum", "wc", "stat", "tree", "file", "cmp", "diff"]
+
+
+def readonly_data_access(
+    segments: list[list[str]], tokens: list[str], data_path: Path, policy: dict[str, Any], cwd: Path | None
+) -> bool:
+    """True quando todo segmento é comando só de leitura e todo caminho dentro do ~/data é readonly_system."""
+    readonly_cmds = set(policy.get("paths", {}).get("readonly_commands", DEFAULT_READONLY_COMMANDS))
+    safe_filters = set(policy.get("commands", {}).get("safe_pipe_filters", []))
+    if not segments or not segments[0] or segments[0][0] not in readonly_cmds:
+        return False
+    if any(not seg or (seg[0] not in readonly_cmds and seg[0] not in safe_filters) for seg in segments[1:]):
+        return False
+    for t in tokens:
+        if is_operator(t):
+            continue
+        candidate = t.split("=", 1)[1] if t.startswith("-") and "=" in t else t
+        if not looks_like_path(candidate):
+            continue
+        p = resolve_path(candidate, cwd)
+        if is_within(p, data_path) and not matches_readonly_system(p, policy):
+            return False
+    return True
 
 
 def looks_like_path(token: str) -> bool:
@@ -304,6 +555,12 @@ def _git_log_bounded(args: list[str]) -> bool:
 
 def find_inefficient_variant(segments: list[list[str]], policy: dict[str, Any]) -> str | None:
     """Coaching One-Shot: retorna a mensagem instrutiva se o 1º segmento for um comando ineficiente."""
+    hit = inefficient_variant_rule(segments, policy)
+    return hit[1] if hit else None
+
+
+def inefficient_variant_rule(segments: list[list[str]], policy: dict[str, Any]) -> tuple[str, str] | None:
+    """(chave em commands.inefficient_variants, mensagem) do coaching que se aplica, ou None."""
     variants = policy.get("commands", {}).get("inefficient_variants", {})
     if not variants or not segments or not segments[0]:
         return None
@@ -314,16 +571,16 @@ def find_inefficient_variant(segments: list[list[str]], policy: dict[str, Any]) 
     for key, msg in variants.items():
         if key == "tree_unbounded":
             if seg[0] == "tree" and not bounded_by_pipe and not any(t.startswith("-L") for t in seg[1:]):
-                return msg
+                return key, msg
         elif key == "git_log_unbounded":
             if seg[:2] == ["git", "log"] and not bounded_by_pipe and not _git_log_bounded(seg[2:]):
-                return msg
+                return key, msg
         else:
             key_tokens = key.split()
             if not key_tokens or seg[0] != key_tokens[0]:
                 continue
             if all(_has_flag(seg[1:], k) for k in key_tokens[1:]):
-                return msg
+                return key, msg
     return None
 
 
@@ -433,6 +690,25 @@ def _prefix_match(text: str, prefix: str) -> bool:
 # Matriz de decisão: comandos shell
 # --------------------------------------------------------------------------------------
 
+# Todo deny leva um id de regra no fim do motivo: `ctx evaluate` agrupa os bloqueios por ele (M-19).
+RULE_TAG_RE = re.compile(r"\[regra: ([\w:.-]+)\]")
+CHAINING_MESSAGE = (
+    "Encadeamento de comandos shell (&&, ||, ;, &, subshells) é proibido: cada comando precisa ser avaliado sozinho "
+    "pelo guardrail. Faça um comando por chamada Bash: os independentes em chamadas paralelas no mesmo turno, os "
+    "dependentes em turnos seguintes. Em vez de `cd X && cmd`, use caminho absoluto ou `git -C X`. Script para outra "
+    "máquina ou shell vai inteiro em aspas simples: ssh host 'a ; b', sh -c 'a && b'."
+)
+
+
+def deny(rule: str, message: str) -> tuple[str, str]:
+    return "deny", f"{message} [regra: {rule}]"
+
+
+def rule_of(reason: str) -> str:
+    m = RULE_TAG_RE.search(reason)
+    return m.group(1) if m else ""
+
+
 
 def evaluate_shell_command(
     cmd: str, policy: dict[str, Any], cwd: Path | None = None, harness: str = "claude"
@@ -444,24 +720,31 @@ def evaluate_shell_command(
     if not cmd_clean:
         return "defer", "Comando vazio ou ausente."
 
-    # 1. Padrões destrutivos (deny)
-    for pat in commands_cfg.get("deny", []):
-        if pat in cmd_clean:
-            return "deny", f"Comando bloqueado pela política de segurança (padrão proibido: '{pat}')."
+    # 1. Padrões destrutivos (deny): casados com o argv (programa e alvos), também dentro de `sh -c`/`ssh`
+    destructive = destructive_rule(cmd_clean, policy)
+    if destructive:
+        return deny(
+            f"destructive:{destructive[0]}",
+            f"Comando bloqueado pela política de segurança (padrão proibido: '{destructive[1]}').",
+        )
 
     # 1b. Ferramentas nativas de arquivo (deny instrutivo quando [file_tools].mode = "coach").
     #     Antes do encadeamento para que um heredoc multi-linha receba a orientação certa.
     file_tools = file_tools_decision(cmd_clean, policy, harness)
     if file_tools and not any(dp in cmd_clean for dp in policy.get("paths", {}).get("deny", [])):
-        return file_tools
+        return deny(f"file-tools:{classify_file_op(cmd_clean)}", file_tools[1])
 
-    # 2. Encadeamento de comandos (deny)
-    if has_chaining_operators(cmd_clean):
-        return (
-            "deny",
-            "Encadeamento de comandos shell (&&, ||, ;, &, subshells) é proibido: cada comando precisa ser avaliado "
-            "sozinho pelo guardrail. Execute um comando por chamada.",
-        )
+    # 2. Encadeamento de comandos (deny). O script citado de `ssh host '…'`/`sh -c '…'` roda em outro shell:
+    #    só as regras destrutivas (passo 1) valem para ele.
+    masked, local_subst = mask_remote_scripts(cmd_clean)
+    if has_chaining_operators(masked):
+        if local_subst:
+            return deny(
+                "chaining:local-subst",
+                "Em aspas duplas, `$(…)` e crase rodam na máquina LOCAL antes do ssh/sh -c. Passe o script em aspas "
+                "simples (ex.: ssh host 'x=$(cmd) ; echo $x'), que ele vai inteiro para o outro shell.",
+            )
+        return deny("chaining", CHAINING_MESSAGE)
 
     raw_tokens = tokenize(cmd_clean)
     if raw_tokens is None:
@@ -484,18 +767,18 @@ def evaluate_shell_command(
                     hit = dp
                     break
         if hit:
-            return "deny", f"Acesso ao caminho sensível restrito '{hit}' é proibido."
+            return deny("secret-path", f"Acesso ao caminho sensível restrito '{hit}' é proibido.")
 
     # 4. Toolchains Sandbox-Safe (deny para binários globais)
     for seg in segments:
         is_forbidden, tc_reason = is_forbidden_toolchain(shlex.join(seg), policy)
         if is_forbidden:
-            return "deny", tc_reason
+            return deny(f"toolchain:{Path(seg[0]).name}", tc_reason)
 
     # 5. Coaching One-Shot (deny instrutivo)
-    coaching = find_inefficient_variant(segments, policy)
+    coaching = inefficient_variant_rule(segments, policy)
     if coaching:
-        return "deny", coaching
+        return deny(f"coach:{coaching[0].replace(' ', '')}", coaching[1])
 
     # 6. Ask forte (operações sensíveis)
     if is_recipe_override(segments):
@@ -511,11 +794,13 @@ def evaluate_shell_command(
 
     data_path = btrfs_path(policy)
     data_raw = policy.get("storage", {}).get("btrfs_nocow", {}).get("path", "~/data")
+    # ler um caminho de paths.readonly_system dentro do ~/data com comando só de leitura não pergunta (M-18)
+    data_readonly = readonly_data_access(segments, tokens, data_path, policy, cwd)
     for needle in {data_raw, str(data_path)}:
-        if re.search(re.escape(needle) + r"(?![\w.-])", cmd_clean):
+        if not data_readonly and re.search(re.escape(needle) + r"(?![\w.-])", cmd_clean):
             return "ask", f"Operação envolvendo {data_path} (Btrfs No-COW) requer confirmação do usuário."
     for t in tokens:
-        if is_operator(t):
+        if is_operator(t) or data_readonly:
             continue
         candidate = t.split("=", 1)[1] if t.startswith("-") and "=" in t else t
         candidate = candidate.split(":", 1)[0]
@@ -588,11 +873,11 @@ def evaluate_file_access(
     # 1. Caminhos proibidos (deny)
     hit = matches_deny_path(path, file_path_str, policy)
     if hit:
-        return "deny", f"Acesso ao arquivo/diretório confidencial '{hit}' é estritamente proibido."
+        return deny("secret-path", f"Acesso ao arquivo/diretório confidencial '{hit}' é estritamente proibido.")
 
-    # 2. Volume Btrfs No-COW (~/data) sempre pergunta
+    # 2. Volume Btrfs No-COW (~/data) sempre pergunta, exceto leitura de paths.readonly_system
     data_path = btrfs_path(policy)
-    if is_within(path, data_path):
+    if is_within(path, data_path) and (is_write or not matches_readonly_system(path, policy)):
         return "ask", f"Operações no volume {data_path} (Btrfs No-COW) requerem confirmação do usuário."
 
     # 3. Dentro do workspace
@@ -772,6 +1057,21 @@ def with_hint(response: dict[str, Any], decision: str, hint: str | None, harness
     return response
 
 
+def log_denial(rule: str, harness: str, policy: dict[str, Any]) -> None:
+    """Grava o bloqueio (só o id da regra, nunca o comando) no .ctx/events.jsonl. Best-effort: nunca falha."""
+    try:
+        if not policy.get("metrics", {}).get("events_log", True) or os.environ.get("CTX_EVENTS_LOG") == "0":
+            return
+        path = WORKSPACE_ROOT / ".ctx" / "events.jsonl"
+        if not path.parent.is_dir():
+            return
+        event = {"ts": round(time.time(), 3), "cmd": "guardrail", "decision": "deny", "rule": rule or "?", "harness": harness}
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event) + "\n")
+    except Exception:  # noqa: BLE001 - métrica é opcional
+        pass
+
+
 def main() -> None:
     """Entry point do hook (PreToolUse / BeforeTool / beforeShellExecution / beforeReadFile)."""
     try:
@@ -801,6 +1101,8 @@ def main() -> None:
     else:
         decision, reason = "allow", "Ferramenta padrão autorizada."
 
+    if decision == "deny":
+        log_denial(rule_of(reason), harness, policy)
     response = format_response(harness, decision, reason, ask_fallback=ask_fallback)
     if kind == "shell" and decision != "deny":
         response = with_hint(response, decision, record_and_suggest(value, policy), harness)

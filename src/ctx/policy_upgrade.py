@@ -86,6 +86,7 @@ SECTIONS: dict[str, tuple[str, str]] = {
 # [recipes.minha-receita]
 # description = "o que a receita faz"
 # params = ["alvo"]
+# requires = ["git status", "rg"]     # comandos de que a receita precisa (`ctx recipe list` mostra os que faltam no allow)
 # steps = ["git status -s -b", "rg -n {alvo} src"]
 """,
     ),
@@ -105,11 +106,47 @@ SECTIONS: dict[str, tuple[str, str]] = {
 # search_adoption_ok = 0.5            # fração de buscas via ctx (vs rg/grep/sed) para "compensa"
 """,
     ),
+    # ctx 0.5: chaves novas em tabelas que já existem; presença testada pela chave (tabela.chave)
+    "search-quality": (
+        "search.glossary",
+        """# ctx:section search-quality
+# Qualidade da busca (ctx 0.5): acrescente estas chaves à tabela [search].
+# glossary = [["painel", "panel"], ["luz de fundo", "backlight"]]   # termos equivalentes do projeto (PT/EN, apelidos)
+# semantic = true                     # semântica híbrida com o BM25; só com o extra agent-harness-hub[semantic]
+# semantic_model = "minishlab/potion-base-8M"   # baixado no `ctx index` para .ctx/models/ (a busca nunca baixa)
+# C/H por função/struct: extra agent-harness-hub[c]. DTS/DTSI já são cortados por nó, sem dependência.
+""",
+    ),
+    "paths-readonly": (
+        "paths.readonly_commands",
+        """# ctx:section paths-readonly
+# Leitura fora do workspace (ctx 0.5), na tabela [paths]: readonly_system aceita ~ e /** (ex.: "/run/media/**",
+# "~/data/projeto/src") e vale também dentro do ~/data, só para leitura. Comandos só de leitura que, com caminhos
+# de readonly_system, não pedem confirmação no ~/data:
+# readonly_commands = ["rg", "ls", "fd", "sha256sum", "wc", "stat", "tree", "file", "cmp", "diff"]
+""",
+    ),
+    "metrics-confidence": (
+        "metrics.evaluate.confident_sessions",
+        """# ctx:section metrics-confidence
+# Na tabela [metrics.evaluate] (ctx 0.5):
+# confident_sessions = 30             # abaixo disso o veredito do `ctx evaluate` sai como "provisório"
+""",
+    ),
 }
 
 
+def _has_key(parsed: dict[str, Any], dotted: str) -> bool:
+    node: Any = parsed
+    for part in dotted.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return False
+        node = node[part]
+    return True
+
+
 def _present(text: str, parsed: dict[str, Any], name: str, table: str) -> bool:
-    return (SECTION_MARKER + name) in text or table in parsed
+    return (SECTION_MARKER + name) in text or _has_key(parsed, table)
 
 
 def missing_sections(text: str) -> list[str]:
