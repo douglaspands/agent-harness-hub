@@ -157,6 +157,28 @@ class TestMigrationAndRepair(IndexTestBase):
         old = search_many(["antigo"], workspace_root=self.root)
         self.assertEqual(old["queries"][0]["count"], 0)
 
+    def test_v04_index_is_rebuilt_with_trigrams_and_name(self) -> None:
+        """Índice da 0.4 (esquema 2): a primeira busca recria com `name`, `chunks_tri` e `vectors`, sem intervenção."""
+        self.db.parent.mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(self.db)
+        con.execute("CREATE TABLE indexed_files (path TEXT PRIMARY KEY, mtime_ns INTEGER, size INTEGER, hash TEXT, kind TEXT)")
+        con.execute(
+            "CREATE VIRTUAL TABLE chunks USING fts5(path, title, chunk_type, start_line UNINDEXED, end_line UNINDEXED, "
+            "content, kind UNINDEXED)"
+        )
+        con.execute("PRAGMA user_version=2")
+        con.commit()
+        con.close()
+        self.assertEqual(index_state(self.db), "outdated")
+        res = search_many(["zebra"], workspace_root=self.root)
+        self.assertTrue(res["queries"][0]["results"])
+        con = sqlite3.connect(self.db)
+        names = {r[0] for r in con.execute("SELECT name FROM sqlite_master")}
+        cols = [r[1] for r in con.execute("PRAGMA table_info(chunks)")]
+        con.close()
+        self.assertTrue({"chunks_tri", "vectors"} <= names)
+        self.assertIn("name", cols)
+
     def test_corrupt_database_is_recreated(self) -> None:
         self.db.parent.mkdir(parents=True, exist_ok=True)
         self.db.write_bytes(b"isto nao e um banco sqlite" * 100)

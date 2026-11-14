@@ -107,6 +107,14 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+SEARCH_MODE_LABEL = {
+    "and": "",
+    "trigram": " · por substring (trigramas)",
+    "or": " · com qualquer termo (nenhum trecho tem todos)",
+    "semantic": " · só por semelhança (nenhum termo casou)",
+}
+
+
 def cmd_search(args: argparse.Namespace) -> int:
     try:
         res = search_many(args.queries, top_k=args.top, path_prefix=args.path, lines=args.lines, timeout=args.timeout, scope=args.scope)
@@ -119,16 +127,19 @@ def cmd_search(args: argparse.Namespace) -> int:
         print(f"⚠ {w}")
 
     for q in res["queries"]:
-        print(f"\n═══ '{q['query']}' — {q['count']} resultados ═══")
+        label = SEARCH_MODE_LABEL.get(q.get("mode", "").removesuffix("+glossary"), "")
+        if q.get("glossary"):
+            label += f" · glossário: {'; '.join(q['glossary'])}"
+        print(f"\n═══ '{q['query']}' — {q['count']} resultados{label} ═══")
         if q["timed_out"]:
             print(f"⏱ Tempo esgotado. Equivalente com rg: {q['rg']}")
         if not q["results"]:
             if not q["timed_out"]:
-                print("Nenhum resultado encontrado no índice FTS5.")
+                print("Nenhum resultado encontrado no índice.")
             continue
         for i, r in enumerate(q["results"], start=1):
             tag = "" if r["kind"] == "code" else f" [{r['kind']}]"
-            print(f"\n[{i}] {r['slice']}{tag} — {r['title']} ({r['chunk_type']}, BM25 {r['score']})")
+            print(f"\n[{i}] {r['slice']}{tag} — {r['title']} ({r['chunk_type']}, {r.get('via', 'bm25')} {r['score']})")
             if r["preview"]:
                 print(r["preview"])
             else:

@@ -40,6 +40,8 @@ DEFAULTS: dict[str, Any] = {
         # "off": busca nunca escreve no índice (padrão) | "incremental": atualiza dentro de um orçamento de tempo
         "refresh": "off",
         "refresh_budget_ms": 300,
+        # Grupos de termos equivalentes do projeto, ex.: [["painel", "panel"], ["luz de fundo", "backlight"]] (M-11)
+        "glossary": [],
     },
     "doctor": {
         "wal_max_mb": 64,

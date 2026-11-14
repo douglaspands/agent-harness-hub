@@ -20,6 +20,64 @@ from ctx.rag import (
 )
 
 
+class TestSearchQuality(unittest.TestCase):
+    """M-01, M-02, M-04, M-06, M-11: recuo da consulta, trigramas, glossário, palavras vazias e prévia."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        (self.root / ".ctx").mkdir()
+        (self.root / "phy-inno-dsidphy.c").write_text(
+            "/* licença */\n" * 40 + "static int inno_dsidphy_init(void)\n{\n\treturn lane_mbps;\n}\n", encoding="utf-8"
+        )
+        (self.root / "board.dts").write_text("backlight: backlight {\n\tpwms = <&pwm1 0 25000 0>;\n};\n", encoding="utf-8")
+        (self.root / "notas.md").write_text("# Painel\nO painel fica cinza sem vídeo.\n", encoding="utf-8")
+        (self.root / "dados.jsonl").write_text('{"k": "' + "x" * 500 + ' marcador"}\n', encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def query(self, q: str, **kw: object) -> dict:
+        return search_many([q], workspace_root=self.root, **kw)["queries"][0]  # type: ignore[arg-type]
+
+    def test_all_terms_first(self) -> None:
+        q = self.query("backlight pwms")
+        self.assertEqual((q["mode"], q["results"][0]["path"]), ("and", "board.dts"))
+
+    def test_substring_of_identifier_falls_back_to_trigrams(self) -> None:
+        q = self.query("dsidph")
+        self.assertEqual(q["mode"], "trigram")
+        self.assertEqual(q["results"][0]["path"], "phy-inno-dsidphy.c")
+
+    def test_natural_language_falls_back_to_any_term(self) -> None:
+        q = self.query("factory dtb backlight pwms")
+        self.assertEqual(q["mode"], "or")
+        self.assertEqual(q["results"][0]["path"], "board.dts")
+
+    def test_stopwords_do_not_break_all_terms(self) -> None:
+        self.assertEqual(sanitize_query("onde o painel fica cinza"), '"painel" "cinza"')
+        self.assertEqual(sanitize_query("the"), '"the"')  # só palavras vazias: mantém
+        self.assertEqual(sanitize_query("x y", "or"), '"x" OR "y"')
+        self.assertEqual(sanitize_query("ab dsidph", "trigram"), '"dsidph"')
+        self.assertEqual(self.query("o painel com vídeo")["mode"], "and")
+
+    def test_glossary_translates_and_reports(self) -> None:
+        (self.root / "policy.toml").write_text('[search]\nglossary = [["luz de fundo", "backlight"]]\n', encoding="utf-8")
+        q = self.query("luz de fundo", path_prefix="board.dts")
+        self.assertEqual(q["results"][0]["path"], "board.dts")  # "luz de fundo" não aparece no DTS
+        self.assertTrue(q["mode"].endswith("+glossary"))
+        self.assertEqual(q["glossary"], ["luz de fundo → backlight"])
+
+    def test_preview_centered_on_match_and_long_lines_cut(self) -> None:
+        r = self.query("lane_mbps", lines=5)["results"][0]
+        first = int(r["preview"].splitlines()[0].split()[0])
+        self.assertEqual(first, 40)  # 3 linhas antes da linha 43 (lane_mbps): pulou o cabeçalho de licença
+        self.assertIn("lane_mbps", r["preview"])
+        line = self.query("marcador", lines=3)["results"][0]["preview"]
+        self.assertIn("…(+", line)
+        self.assertLess(len(line), 260)
+
+
 class TestRAG(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
