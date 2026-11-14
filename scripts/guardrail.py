@@ -447,10 +447,39 @@ def matches_harness_allow(path: Path, policy: dict[str, Any]) -> bool:
 
 
 def matches_readonly_system(path: Path, policy: dict[str, Any]) -> bool:
+    """Caminhos só de leitura (paths.readonly_system); "~" é expandido e o "/**" no fim é opcional."""
     for ro in policy.get("paths", {}).get("readonly_system", []):
-        if is_within(path, Path(ro).resolve()):
+        ro = ro[:-3] if ro.endswith("/**") else ro
+        if is_within(path, resolve_path(ro)):
             return True
     return False
+
+
+# Comandos que só leem: um caminho de paths.readonly_system passado a eles é liberado mesmo dentro do
+# volume Btrfs No-COW (~/data), cujos outros acessos continuam pedindo confirmação.
+DEFAULT_READONLY_COMMANDS = ["rg", "ls", "fd", "sha256sum", "wc", "stat", "tree", "file", "cmp", "diff"]
+
+
+def readonly_data_access(
+    segments: list[list[str]], tokens: list[str], data_path: Path, policy: dict[str, Any], cwd: Path | None
+) -> bool:
+    """True quando todo segmento é comando só de leitura e todo caminho dentro do ~/data é readonly_system."""
+    readonly_cmds = set(policy.get("paths", {}).get("readonly_commands", DEFAULT_READONLY_COMMANDS))
+    safe_filters = set(policy.get("commands", {}).get("safe_pipe_filters", []))
+    if not segments or not segments[0] or segments[0][0] not in readonly_cmds:
+        return False
+    if any(not seg or (seg[0] not in readonly_cmds and seg[0] not in safe_filters) for seg in segments[1:]):
+        return False
+    for t in tokens:
+        if is_operator(t):
+            continue
+        candidate = t.split("=", 1)[1] if t.startswith("-") and "=" in t else t
+        if not looks_like_path(candidate):
+            continue
+        p = resolve_path(candidate, cwd)
+        if is_within(p, data_path) and not matches_readonly_system(p, policy):
+            return False
+    return True
 
 
 def looks_like_path(token: str) -> bool:
@@ -741,11 +770,13 @@ def evaluate_shell_command(
 
     data_path = btrfs_path(policy)
     data_raw = policy.get("storage", {}).get("btrfs_nocow", {}).get("path", "~/data")
+    # ler um caminho de paths.readonly_system dentro do ~/data com comando só de leitura não pergunta (M-18)
+    data_readonly = readonly_data_access(segments, tokens, data_path, policy, cwd)
     for needle in {data_raw, str(data_path)}:
-        if re.search(re.escape(needle) + r"(?![\w.-])", cmd_clean):
+        if not data_readonly and re.search(re.escape(needle) + r"(?![\w.-])", cmd_clean):
             return "ask", f"Operação envolvendo {data_path} (Btrfs No-COW) requer confirmação do usuário."
     for t in tokens:
-        if is_operator(t):
+        if is_operator(t) or data_readonly:
             continue
         candidate = t.split("=", 1)[1] if t.startswith("-") and "=" in t else t
         candidate = candidate.split(":", 1)[0]
@@ -820,9 +851,9 @@ def evaluate_file_access(
     if hit:
         return "deny", f"Acesso ao arquivo/diretório confidencial '{hit}' é estritamente proibido."
 
-    # 2. Volume Btrfs No-COW (~/data) sempre pergunta
+    # 2. Volume Btrfs No-COW (~/data) sempre pergunta, exceto leitura de paths.readonly_system
     data_path = btrfs_path(policy)
-    if is_within(path, data_path):
+    if is_within(path, data_path) and (is_write or not matches_readonly_system(path, policy)):
         return "ask", f"Operações no volume {data_path} (Btrfs No-COW) requerem confirmação do usuário."
 
     # 3. Dentro do workspace

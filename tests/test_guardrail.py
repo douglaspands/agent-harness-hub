@@ -183,6 +183,48 @@ class TestRemoteScripts(unittest.TestCase):
         self.assertEqual(decide("cd /x && ssh h 'ls'"), "deny")
 
 
+class TestReadonlyPaths(unittest.TestCase):
+    """M-18: paths.readonly_system com ~ e /**, antes da regra do ~/data; paths.readonly_commands."""
+
+    HOME = os.path.expanduser("~")
+    CARD = "/run/media/user/ROMS/logs"
+    POLICY = {
+        **SAMPLE_POLICY,
+        "commands": {**SAMPLE_POLICY["commands"], "allow": [*SAMPLE_POLICY["commands"]["allow"], "fd"]},
+        "paths": {
+            **SAMPLE_POLICY["paths"],
+            "readonly_system": ["/etc/os-release", "/run/media/**", "~/data/proj/src"],
+        },
+    }
+
+    def cmd(self, c: str) -> str:
+        return evaluate_shell_command(c, self.POLICY)[0]
+
+    def test_reading_declared_paths_is_allowed(self) -> None:
+        self.assertEqual(self.cmd(f'rg -n "panel" {self.CARD}/boot/boot-1.log'), "allow")
+        self.assertEqual(self.cmd(f"ls {self.CARD}/hw"), "allow")
+        self.assertEqual(self.cmd(f"rg -n lane_mbps ~/data/proj/src/drivers"), "allow")
+        self.assertEqual(self.cmd(f"rg -n x {self.HOME}/data/proj/src | head -5"), "allow")
+        self.assertEqual(evaluate_file_access("Read", f"{self.CARD}/events.log", self.POLICY)[0], "allow")
+        self.assertEqual(evaluate_file_access("Read", "~/data/proj/src/a.c", self.POLICY)[0], "allow")
+
+    def test_writes_and_other_data_paths_still_ask(self) -> None:
+        self.assertEqual(evaluate_file_access("Write", f"{self.CARD}/events.log", self.POLICY)[0], "ask")
+        self.assertEqual(evaluate_file_access("Write", "~/data/proj/src/a.c", self.POLICY)[0], "ask")
+        self.assertEqual(evaluate_file_access("Read", f"{self.HOME}/data/other/db.sqlite", self.POLICY)[0], "ask")
+        self.assertEqual(self.cmd(f"rg -n x {self.HOME}/data/other/db"), "ask")
+        self.assertEqual(self.cmd(f"ls {self.HOME}/data/vm"), "ask")
+        # comando de leitura misturando um caminho liberado e outro do ~/data
+        self.assertEqual(self.cmd(f"rg -n x ~/data/proj/src {self.HOME}/data/vm/disk.img"), "ask")
+        # comando que não é só de leitura
+        self.assertEqual(self.cmd("cat ~/data/proj/src/a.c"), "ask")
+
+    def test_readonly_commands_is_configurable(self) -> None:
+        policy = {**self.POLICY, "paths": {**self.POLICY["paths"], "readonly_commands": ["fd"]}}
+        self.assertEqual(evaluate_shell_command("rg -n x ~/data/proj/src", policy)[0], "ask")
+        self.assertEqual(evaluate_shell_command("fd x ~/data/proj/src", policy)[0], "allow")
+
+
 class TestShellDecisions(unittest.TestCase):
     def test_basic_matrix(self) -> None:
         self.assertEqual(decide("git status"), "allow")
