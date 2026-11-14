@@ -254,9 +254,15 @@ class TestEvaluateVerdicts(Workspace):
             self.session(d, "m", [".venv/bin/ctx status", "a", "b", "c"], results={1: chain, 2: chain, 3: old})
         o = self.run_eval()["overall"]
         self.assertEqual(o["denial_rules"][0], {"rule": "chaining", "count": 12, "tokens": 3000})
-        self.assertEqual(o["denial_rules"][1]["count"], 6)
-        self.assertIn("padrão proibido", o["denial_rules"][1]["rule"])
+        self.assertEqual(o["denial_rules"][1], {"rule": "destructive:mkfs", "count": 6, "tokens": 1500})
         self.assertEqual(o["denial_repeats"], 6)  # o 2º chaining de cada sessão
+
+    def test_legacy_and_unknown_denial_labels(self) -> None:
+        from ctx.metrics import denial_rule
+
+        self.assertEqual(denial_rule(": Encadeamento de comandos shell (&&) é proibido"), "chaining")  # antigo = novo
+        self.assertEqual(denial_rule(': Regra do time: nada de "make deploy" 42x'), "Regra do time: nada de \"make deploy\" Nx")
+        self.assertEqual(denial_rule('")'), "(sem texto)")
 
     def test_provisional_verdict_and_fact_hint(self) -> None:
         """M-20 e M-21: abaixo de confident_sessions o veredito é provisório; sem fatos, recomenda `ctx fact add`."""

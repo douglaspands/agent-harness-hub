@@ -120,13 +120,35 @@ def is_detour(cmd: str) -> bool:
     return head in DETOUR_PROGRAMS or (head == "sed" and "-n" in tokens[1:])
 
 
+# Mensagens do guardrail anterior à 0.5 (sem `[regra: …]`) -> id atual, para antigos e novos somarem na mesma linha
+LEGACY_RULES = (
+    ("Encadeamento de comandos", "chaining"),
+    ("padrão proibido: 'mkfs", "destructive:mkfs"),
+    ("padrão proibido: 'rm -", "destructive:rm"),
+    ("padrão proibido: 'curl", "destructive:pipe-shell"),
+    ("padrão proibido: 'wget", "destructive:pipe-shell"),
+    ("Sempre limite o git log", "coach:git_log_unbounded"),
+    ("Sempre passe -L", "coach:tree_unbounded"),
+    ("Leitura de arquivo via shell bloqueada", "file-tools:read"),
+    ("Escrita de arquivo via shell bloqueada", "file-tools:write"),
+    ("caminho sensível restrito", "secret-path"),
+    ("arquivo/diretório confidencial", "secret-path"),
+    ("proibido para stack", "toolchain"),
+)
+
+
 def denial_rule(text: str) -> str:
-    """Id da regra de um bloqueio (`[regra: <id>]`, guardrail 0.5+) ou, em transcripts antigos, o início da mensagem."""
+    """Id da regra de um bloqueio (`[regra: <id>]`, guardrail 0.5+) ou, em transcripts antigos, o id equivalente da
+    mensagem conhecida; sem correspondência, o início da mensagem."""
     m = RULE_TAG_RE.search(text)
     if m:
         return m.group(1)
-    first = text.strip().splitlines()[0] if text.strip() else "(sem texto)"
-    return re.sub(r"\d+", "N", first)[:70]
+    for needle, rule in LEGACY_RULES:
+        if needle in text:
+            return rule
+    first = next((ln for ln in text.splitlines() if ln.strip()), "")
+    first = first.strip().lstrip(":").strip().strip("\"')]}").strip()
+    return re.sub(r"\d+", "N", first)[:70] if re.search(r"\w{3}", first) else "(sem texto)"
 
 
 def new_stats(path: Path) -> dict[str, Any]:
