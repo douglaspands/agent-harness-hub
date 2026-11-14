@@ -555,6 +555,12 @@ def _git_log_bounded(args: list[str]) -> bool:
 
 def find_inefficient_variant(segments: list[list[str]], policy: dict[str, Any]) -> str | None:
     """Coaching One-Shot: retorna a mensagem instrutiva se o 1º segmento for um comando ineficiente."""
+    hit = inefficient_variant_rule(segments, policy)
+    return hit[1] if hit else None
+
+
+def inefficient_variant_rule(segments: list[list[str]], policy: dict[str, Any]) -> tuple[str, str] | None:
+    """(chave em commands.inefficient_variants, mensagem) do coaching que se aplica, ou None."""
     variants = policy.get("commands", {}).get("inefficient_variants", {})
     if not variants or not segments or not segments[0]:
         return None
@@ -565,16 +571,16 @@ def find_inefficient_variant(segments: list[list[str]], policy: dict[str, Any]) 
     for key, msg in variants.items():
         if key == "tree_unbounded":
             if seg[0] == "tree" and not bounded_by_pipe and not any(t.startswith("-L") for t in seg[1:]):
-                return msg
+                return key, msg
         elif key == "git_log_unbounded":
             if seg[:2] == ["git", "log"] and not bounded_by_pipe and not _git_log_bounded(seg[2:]):
-                return msg
+                return key, msg
         else:
             key_tokens = key.split()
             if not key_tokens or seg[0] != key_tokens[0]:
                 continue
             if all(_has_flag(seg[1:], k) for k in key_tokens[1:]):
-                return msg
+                return key, msg
     return None
 
 
@@ -684,6 +690,25 @@ def _prefix_match(text: str, prefix: str) -> bool:
 # Matriz de decisão: comandos shell
 # --------------------------------------------------------------------------------------
 
+# Todo deny leva um id de regra no fim do motivo: `ctx evaluate` agrupa os bloqueios por ele (M-19).
+RULE_TAG_RE = re.compile(r"\[regra: ([\w:.-]+)\]")
+CHAINING_MESSAGE = (
+    "Encadeamento de comandos shell (&&, ||, ;, &, subshells) é proibido: cada comando precisa ser avaliado sozinho "
+    "pelo guardrail. Faça um comando por chamada Bash: os independentes em chamadas paralelas no mesmo turno, os "
+    "dependentes em turnos seguintes. Em vez de `cd X && cmd`, use caminho absoluto ou `git -C X`. Script para outra "
+    "máquina ou shell vai inteiro em aspas simples: ssh host 'a ; b', sh -c 'a && b'."
+)
+
+
+def deny(rule: str, message: str) -> tuple[str, str]:
+    return "deny", f"{message} [regra: {rule}]"
+
+
+def rule_of(reason: str) -> str:
+    m = RULE_TAG_RE.search(reason)
+    return m.group(1) if m else ""
+
+
 
 def evaluate_shell_command(
     cmd: str, policy: dict[str, Any], cwd: Path | None = None, harness: str = "claude"
@@ -696,31 +721,30 @@ def evaluate_shell_command(
         return "defer", "Comando vazio ou ausente."
 
     # 1. Padrões destrutivos (deny): casados com o argv (programa e alvos), também dentro de `sh -c`/`ssh`
-    hit = destructive_rule(cmd_clean, policy)
-    if hit:
-        return "deny", f"Comando bloqueado pela política de segurança (padrão proibido: '{hit[1]}')."
+    destructive = destructive_rule(cmd_clean, policy)
+    if destructive:
+        return deny(
+            f"destructive:{destructive[0]}",
+            f"Comando bloqueado pela política de segurança (padrão proibido: '{destructive[1]}').",
+        )
 
     # 1b. Ferramentas nativas de arquivo (deny instrutivo quando [file_tools].mode = "coach").
     #     Antes do encadeamento para que um heredoc multi-linha receba a orientação certa.
     file_tools = file_tools_decision(cmd_clean, policy, harness)
     if file_tools and not any(dp in cmd_clean for dp in policy.get("paths", {}).get("deny", [])):
-        return file_tools
+        return deny(f"file-tools:{classify_file_op(cmd_clean)}", file_tools[1])
 
     # 2. Encadeamento de comandos (deny). O script citado de `ssh host '…'`/`sh -c '…'` roda em outro shell:
     #    só as regras destrutivas (passo 1) valem para ele.
     masked, local_subst = mask_remote_scripts(cmd_clean)
     if has_chaining_operators(masked):
         if local_subst:
-            return (
-                "deny",
+            return deny(
+                "chaining:local-subst",
                 "Em aspas duplas, `$(…)` e crase rodam na máquina LOCAL antes do ssh/sh -c. Passe o script em aspas "
                 "simples (ex.: ssh host 'x=$(cmd) ; echo $x'), que ele vai inteiro para o outro shell.",
             )
-        return (
-            "deny",
-            "Encadeamento de comandos shell (&&, ||, ;, &, subshells) é proibido: cada comando precisa ser avaliado "
-            "sozinho pelo guardrail. Execute um comando por chamada.",
-        )
+        return deny("chaining", CHAINING_MESSAGE)
 
     raw_tokens = tokenize(cmd_clean)
     if raw_tokens is None:
@@ -743,18 +767,18 @@ def evaluate_shell_command(
                     hit = dp
                     break
         if hit:
-            return "deny", f"Acesso ao caminho sensível restrito '{hit}' é proibido."
+            return deny("secret-path", f"Acesso ao caminho sensível restrito '{hit}' é proibido.")
 
     # 4. Toolchains Sandbox-Safe (deny para binários globais)
     for seg in segments:
         is_forbidden, tc_reason = is_forbidden_toolchain(shlex.join(seg), policy)
         if is_forbidden:
-            return "deny", tc_reason
+            return deny(f"toolchain:{Path(seg[0]).name}", tc_reason)
 
     # 5. Coaching One-Shot (deny instrutivo)
-    coaching = find_inefficient_variant(segments, policy)
+    coaching = inefficient_variant_rule(segments, policy)
     if coaching:
-        return "deny", coaching
+        return deny(f"coach:{coaching[0].replace(' ', '')}", coaching[1])
 
     # 6. Ask forte (operações sensíveis)
     if is_recipe_override(segments):
@@ -849,7 +873,7 @@ def evaluate_file_access(
     # 1. Caminhos proibidos (deny)
     hit = matches_deny_path(path, file_path_str, policy)
     if hit:
-        return "deny", f"Acesso ao arquivo/diretório confidencial '{hit}' é estritamente proibido."
+        return deny("secret-path", f"Acesso ao arquivo/diretório confidencial '{hit}' é estritamente proibido.")
 
     # 2. Volume Btrfs No-COW (~/data) sempre pergunta, exceto leitura de paths.readonly_system
     data_path = btrfs_path(policy)
@@ -1033,6 +1057,21 @@ def with_hint(response: dict[str, Any], decision: str, hint: str | None, harness
     return response
 
 
+def log_denial(rule: str, harness: str, policy: dict[str, Any]) -> None:
+    """Grava o bloqueio (só o id da regra, nunca o comando) no .ctx/events.jsonl. Best-effort: nunca falha."""
+    try:
+        if not policy.get("metrics", {}).get("events_log", True) or os.environ.get("CTX_EVENTS_LOG") == "0":
+            return
+        path = WORKSPACE_ROOT / ".ctx" / "events.jsonl"
+        if not path.parent.is_dir():
+            return
+        event = {"ts": round(time.time(), 3), "cmd": "guardrail", "decision": "deny", "rule": rule or "?", "harness": harness}
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event) + "\n")
+    except Exception:  # noqa: BLE001 - métrica é opcional
+        pass
+
+
 def main() -> None:
     """Entry point do hook (PreToolUse / BeforeTool / beforeShellExecution / beforeReadFile)."""
     try:
@@ -1062,6 +1101,8 @@ def main() -> None:
     else:
         decision, reason = "allow", "Ferramenta padrão autorizada."
 
+    if decision == "deny":
+        log_denial(rule_of(reason), harness, policy)
     response = format_response(harness, decision, reason, ask_fallback=ask_fallback)
     if kind == "shell" and decision != "deny":
         response = with_hint(response, decision, record_and_suggest(value, policy), harness)

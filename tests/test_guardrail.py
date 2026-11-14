@@ -225,6 +225,51 @@ class TestReadonlyPaths(unittest.TestCase):
         self.assertEqual(evaluate_shell_command("fd x ~/data/proj/src", policy)[0], "allow")
 
 
+class TestRuleIds(unittest.TestCase):
+    """M-19: todo deny traz um id de regra; o hook grava só o id no .ctx/events.jsonl."""
+
+    def test_each_deny_has_a_rule_id(self) -> None:
+        from scripts.guardrail import rule_of
+
+        cases = {
+            "rm -rf /": "destructive:rm",
+            "mkfs.ext4 /dev/sdb": "destructive:mkfs",
+            "git status && git diff": "chaining",
+            'ssh h "x=$(id) ; echo $x"': "chaining:local-subst",
+            "cat ~/.ssh/id_rsa": "secret-path",
+            "python3 x.py": "toolchain:python3",
+            "tree": "coach:tree_unbounded",
+            "grep -r foo src": "coach:grep-r",
+        }
+        for cmd, rule in cases.items():
+            dec, reason = evaluate_shell_command(cmd, SAMPLE_POLICY)
+            self.assertEqual((dec, rule_of(reason)), ("deny", rule), cmd)
+        self.assertEqual(rule_of(evaluate_file_access("Read", "~/.ssh/id_rsa", SAMPLE_POLICY)[1]), "secret-path")
+
+    def test_chaining_message_says_what_to_do_instead(self) -> None:
+        reason = evaluate_shell_command("cd src && ls", SAMPLE_POLICY)[1]
+        self.assertIn("paralelas", reason)
+        self.assertIn("git -C", reason)
+
+    def test_denial_is_logged_with_rule_only(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        from ctx.metrics import guardrail_module
+
+        g = guardrail_module()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(g, "WORKSPACE_ROOT", Path(tmp)), \
+                mock.patch.dict(os.environ, {"CTX_EVENTS_LOG": "1"}):
+            (Path(tmp) / ".ctx").mkdir()
+            g.log_denial("chaining", "claude", {})
+            g.log_denial("chaining", "claude", {"metrics": {"events_log": False}})
+            events = [json.loads(x) for x in (Path(tmp) / ".ctx" / "events.jsonl").read_text().splitlines()]
+        self.assertEqual(len(events), 1)
+        self.assertEqual({k: events[0][k] for k in ("cmd", "rule", "decision")}, {"cmd": "guardrail", "rule": "chaining", "decision": "deny"})
+
+
 class TestShellDecisions(unittest.TestCase):
     def test_basic_matrix(self) -> None:
         self.assertEqual(decide("git status"), "allow")
