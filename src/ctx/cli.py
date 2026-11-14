@@ -413,6 +413,11 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         f"(instruções {o['overhead_tokens_per_session']}/sessão + bloqueios {o['denial_waste_tokens']})"
     )
     print(f"   saldo líquido estimado: {o['net_tokens']} tokens ({o['net_tokens_per_session']}/sessão)  [tokens = estimativa chars/4]")
+    if o.get("confidence") == "provisório" and o["verdict"] != "sem dados":
+        print("   ⚠️  veredito PROVISÓRIO: poucas sessões para decidir (ver recomendação)")
+    if o.get("denial_rules"):
+        print(f"\nBloqueios por regra ({o['denial_repeats']} repetidos na mesma sessão = coaching que não ensinou):")
+        print(format_table([[r["count"], f"~{r['tokens']}", r["rule"]] for r in o["denial_rules"][:8]], ["Vezes", "Tokens", "Regra"]))
     print("\nPor recurso:")
     print(format_table([[f"{VERDICT_ICON[f['verdict']]} {f['verdict']}", f["feature"], f["evidence"]] for f in res["features"]], ["Veredito", "Recurso", "Evidência"]))
     if res["models"]:

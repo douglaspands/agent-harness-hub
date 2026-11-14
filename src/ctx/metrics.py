@@ -36,6 +36,7 @@ SHELL_TOOLS = {"Bash"}
 FETCH_TOOLS = {"WebFetch"}
 COACH_MARKER = "file_tools=coach"
 GUARDRAIL_DENY_RE = re.compile(r"PreToolUse:\w+ hook error|hook error:")
+RULE_TAG_RE = re.compile(r"\[regra: ([\w:.-]+)\]")
 COUNTERS = ("native_read", "bash_read", "native_write", "bash_write", "coach_denies")
 CTX_COUNTERS = (
     "ctx_search", "ctx_queries", "ctx_map", "ctx_status", "ctx_recall", "ctx_fact", "ctx_upstream", "ctx_recipe",
@@ -119,9 +120,21 @@ def is_detour(cmd: str) -> bool:
     return head in DETOUR_PROGRAMS or (head == "sed" and "-n" in tokens[1:])
 
 
+def denial_rule(text: str) -> str:
+    """Id da regra de um bloqueio (`[regra: <id>]`, guardrail 0.5+) ou, em transcripts antigos, o início da mensagem."""
+    m = RULE_TAG_RE.search(text)
+    if m:
+        return m.group(1)
+    first = text.strip().splitlines()[0] if text.strip() else "(sem texto)"
+    return re.sub(r"\d+", "N", first)[:70]
+
+
 def new_stats(path: Path) -> dict[str, Any]:
     stats: dict[str, Any] = {k: 0 for k in ALL_NUMERIC}
-    stats.update({"session": path.stem, "started": "", "model": "", "start_ts": 0.0, "end_ts": 0.0})
+    stats.update({
+        "session": path.stem, "started": "", "model": "", "start_ts": 0.0, "end_ts": 0.0,
+        "denial_rules": {}, "denial_repeats": 0,
+    })
     return stats
 
 
@@ -170,8 +183,14 @@ def analyze_session(path: Path) -> dict[str, Any]:
                 stats["result_chars"] += len(text)
                 if COACH_MARKER in text:
                     stats["coach_denies"] += 1
-                if GUARDRAIL_DENY_RE.search(text):
+                m = GUARDRAIL_DENY_RE.search(text)
+                if m:
                     stats["denials"] += 1
+                    # por regra; a mesma regra de novo na sessão = coaching que não ensinou (M-19)
+                    rule = denial_rule(text[m.end() :])
+                    stats["denial_rules"][rule] = stats["denial_rules"].get(rule, 0) + 1
+                    if stats["denial_rules"][rule] > 1:
+                        stats["denial_repeats"] += 1
     stats["repeated_cmds"] = sum(n - 1 for c, n in commands.items() if n > 1 and c not in TRIVIAL_REPEATS)
     stats["redownloads"] = sum(n - 1 for n in urls.values() if n > 1)
     return stats
@@ -254,6 +273,9 @@ def event_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
             out["upstream_cached"] += 1 if ev.get("cached") else 0
         elif cmd == "hint":
             out["hints"] += 1
+        elif cmd == "guardrail" and ev.get("decision") == "deny":
+            rule = str(ev.get("rule") or "?")
+            out.setdefault("guardrail_rules", {})[rule] = out.get("guardrail_rules", {}).get(rule, 0) + 1
     latency = {}
     for cmd, vals in sorted(by_cmd.items()):
         vals.sort()

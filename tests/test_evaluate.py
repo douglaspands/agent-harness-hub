@@ -245,6 +245,38 @@ class TestEvaluateVerdicts(Workspace):
             self.session(d, "m", [".venv/bin/ctx status"] + ["cmd"] * n_deny, results={i: deny for i in range(1, 1 + n_deny)})
         self.assertEqual(self.feature(self.run_eval(), "coaching do guardrail")["verdict"], NAO)
 
+    def test_denials_by_rule_and_repeats(self) -> None:
+        """M-19: por id de regra (guardrail 0.5) e, em transcripts antigos, pelo início da mensagem."""
+        self.policy("")
+        chain = "PreToolUse:Bash hook error: Encadeamento ... proibido. [regra: chaining]"
+        old = "PreToolUse:Bash hook error: Comando bloqueado (padrão proibido: 'mkfs')."
+        for d in range(6):
+            self.session(d, "m", [".venv/bin/ctx status", "a", "b", "c"], results={1: chain, 2: chain, 3: old})
+        o = self.run_eval()["overall"]
+        self.assertEqual(o["denial_rules"][0], {"rule": "chaining", "count": 12, "tokens": 3000})
+        self.assertEqual(o["denial_rules"][1]["count"], 6)
+        self.assertIn("padrão proibido", o["denial_rules"][1]["rule"])
+        self.assertEqual(o["denial_repeats"], 6)  # o 2º chaining de cada sessão
+
+    def test_provisional_verdict_and_fact_hint(self) -> None:
+        """M-20 e M-21: abaixo de confident_sessions o veredito é provisório; sem fatos, recomenda `ctx fact add`."""
+        self.healthy()
+        res = self.run_eval()
+        self.assertEqual(res["overall"]["confidence"], "provisório")
+        self.assertTrue(any("provisório" in r for r in res["recommendations"]))
+        self.assertTrue(any("ctx fact add" in r for r in res["recommendations"]))
+        self.policy("[metrics.evaluate]\nconfident_sessions = 10\n")
+        self.assertEqual(self.run_eval()["overall"]["confidence"], "ok")
+
+    def test_search_adoption_per_session(self) -> None:
+        """M-22: a evidência traz a adoção por sessão, além de por chamada."""
+        self.policy("")
+        for d in range(6):
+            self.session(d, "m", [".venv/bin/ctx status", "rg foo"] + ([".venv/bin/ctx search x"] if d < 2 else []))
+        evidence = self.feature(self.run_eval(), "busca e índice")["evidence"]
+        self.assertIn("2/6 sessões usaram `ctx search`", evidence)
+        self.assertIn("6/6 algum comando do ctx", evidence)
+
     def test_facts_never_consulted_and_stale(self) -> None:
         self.policy("")
         (self.root / "notes.txt").write_text("a\nb\n", encoding="utf-8")

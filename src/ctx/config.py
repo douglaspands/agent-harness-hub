@@ -94,6 +94,7 @@ DEFAULTS: dict[str, Any] = {
             "tokens_per_call": 250,       # custo médio de uma chamada de ferramenta evitada (pedido + resultado + turno)
             "recall_hit_calls": 2,        # chamadas que um acerto de recall/fato costuma evitar (redescobrir + reexecutar)
             "search_adoption_ok": 0.5,    # fração de buscas via ctx (vs rg/grep/sed) para "compensa"
+            "confident_sessions": 30,     # abaixo disso o veredito sai como "provisório"
         },
     },
 }
