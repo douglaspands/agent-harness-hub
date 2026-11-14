@@ -54,6 +54,9 @@ class TestInit(unittest.TestCase):
         policy = tomllib.loads((self.target / "policy.toml").read_text(encoding="utf-8"))
         self.assertEqual(policy["project"]["name"], "meu-app")
         self.assertEqual(policy["ctx"]["runner"], ".venv/bin/ctx")
+        # M-07: os comandos da receita embutida copy-verify já saem liberados
+        for req in ("cp", "sync", "sha256sum"):
+            self.assertIn(req, policy["commands"]["allow"])
 
         settings = json.loads((self.target / ".claude" / "settings.json").read_text(encoding="utf-8"))
         self.assertTrue(validate_claude_hooks(settings)[0])

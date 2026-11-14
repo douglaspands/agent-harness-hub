@@ -74,6 +74,7 @@ DEFAULTS: dict[str, Any] = {
         "copy-verify": {
             "description": "Copia origem -> destino (arquivo), sincroniza o disco e confere o sha256: tudo numa chamada",
             "params": ["origem", "destino"],
+            "requires": ["cp", "sync", "sha256sum"],  # o `ctx init` coloca no commands.allow gerado (M-07)
             "steps": [
                 "cp {origem} {destino}",
                 "sync",

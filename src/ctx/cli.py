@@ -309,9 +309,13 @@ def cmd_fact(args: argparse.Namespace) -> int:
 
 def cmd_recipe(args: argparse.Namespace) -> int:
     if args.recipe_cmd == "list":
-        rows = [[r["name"], " ".join(f"<{p}>" for p in r["params"]) or "-", str(r["steps"]), r["description"]] for r in list_recipes(WORKSPACE_ROOT)]
+        recipes = list_recipes(WORKSPACE_ROOT)
+        rows = [[r["name"], " ".join(f"<{p}>" for p in r["params"]) or "-", str(r["steps"]), r["description"]] for r in recipes]
         print("🍳 Receitas (`ctx recipe run <nome> [args]`):\n")
         print(format_table(rows, ["Nome", "Argumentos", "Etapas", "Descrição"]))
+        for r in recipes:
+            if r["missing"]:
+                print(f"\n⚠ '{r['name']}' precisa de {', '.join(r['missing'])} em commands.allow do policy.toml para rodar sem --yes.")
         return 0
     try:
         res = run_recipe(WORKSPACE_ROOT, args.name, args.args, yes=args.yes, step_timeout=args.timeout)
@@ -330,6 +334,8 @@ def cmd_recipe(args: argparse.Namespace) -> int:
         print(f"✋ Receita '{args.name}': {len(res['pending'])} etapa(s) não liberadas pelo guardrail — nada foi executado:")
         for p in res["pending"]:
             print(f"   etapa {p['step']} [{p['decision']}] `{p['command']}` — {p['reason']}")
+        if res.get("missing_requires"):
+            print(f"   A receita declara que precisa de {', '.join(res['missing_requires'])} em commands.allow.")
         print("   Se o usuário aprovar, reexecute com --yes (o guardrail pedirá a confirmação dele) ou adicione os comandos a commands.allow no policy.toml.")
     else:
         icon = "✅" if res["status"] == "ok" else "❌"
