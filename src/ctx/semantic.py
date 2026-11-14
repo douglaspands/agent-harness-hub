@@ -18,6 +18,7 @@ from typing import Any
 
 DEFAULT_MODEL = "minishlab/potion-base-8M"
 TEXT_CHARS = 1500  # início do trecho usado no embedding (título e caminho vêm antes)
+MODEL_FILES = ["config.json", "model.safetensors", "tokenizer.json", "modules.json", "*.md"]
 
 _MODELS: dict[str, Any] = {}
 
@@ -40,7 +41,8 @@ def _download(name: str, target: Path) -> None:
     tmp = target.with_name(target.name + ".partial")
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.parent.mkdir(parents=True, exist_ok=True)
-    snapshot_download(repo_id=name, local_dir=str(tmp))
+    # só o que o model2vec carrega (o repositório traz também uma cópia ONNX do mesmo tamanho do modelo)
+    snapshot_download(repo_id=name, local_dir=str(tmp), allow_patterns=MODEL_FILES)
     shutil.rmtree(tmp / ".cache", ignore_errors=True)  # metadados do download, não do modelo
     os.replace(tmp, target)
 
