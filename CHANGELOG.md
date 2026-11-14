@@ -10,7 +10,7 @@ Decisões de design ainda não implementadas: [`docs/design/ctx-propostas.md`](d
 - **M-01** Recuo da consulta: todos os termos → substring (trigramas) → qualquer termo, com o modo no cabeçalho do resultado.
 - **M-02** Pesos por coluna no BM25 (título 6, nome do arquivo 4, caminho 2, conteúdo 1, tipo 0,5).
 - **M-03** Corte estrutural de C/H por definição (tree-sitter, extra `c`) e de DTS/DTSI por nó (sem dependência), com o símbolo no título.
-- **M-04** Tabela FTS5 de trigramas (`chunks_tri`) para pedaços de identificador. Índice no esquema 3, recriado sozinho na primeira chamada.
+- **M-04** Tabela FTS5 de trigramas (`chunks_tri`) para pedaços de identificador. Índice no esquema 4 (o 3 foi do protótipo; as colunas também são conferidas), recriado sozinho na primeira chamada.
 - **M-05** Busca semântica local híbrida (extra `semantic`, model2vec `potion-base-8M`, RRF k=60, peso 0,8), pulada quando o BM25 já basta; modelo baixado só no `ctx index`, direto para `.ctx/models/`.
 - **M-06** Prévia centrada na linha que casou; linhas cortadas em 200 caracteres.
 - **M-11** `[search].glossary` (termos equivalentes do projeto) e palavras vazias PT/EN fora da consulta lexical.

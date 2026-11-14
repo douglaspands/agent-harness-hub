@@ -33,8 +33,17 @@ MAP_PRIORITY = ("src/", "scripts/", "tests/", "openspec/changes/")
 DEFAULT_PREVIEW_LINES = 25
 
 # Esquema do índice. O índice é cache reconstruível: versão diferente => recriado e reindexado (ver get_db).
-# 3: coluna `name` (nome do arquivo), tabela de trigramas `chunks_tri` e `vectors` (semântica opcional).
-SCHEMA_VERSION = 3
+# 4: coluna `name` (nome do arquivo), tabela de trigramas `chunks_tri` e `vectors` (semântica opcional). O 3 foi
+# usado pelo protótipo local da 0.4 (sem `name`); por isso a versão pula para 4 e as colunas também são conferidas.
+SCHEMA_VERSION = 4
+CHUNK_COLUMNS = ["path", "title", "chunk_type", "start_line", "end_line", "content", "kind", "name"]
+
+
+def _chunk_columns(con: sqlite3.Connection) -> list[str]:
+    try:
+        return [r[1] for r in con.execute("PRAGMA table_info(chunks)")]
+    except sqlite3.DatabaseError:
+        return []
 # Pesos do bm25() por coluna de `chunks`: path, title, chunk_type, start_line, end_line, content, kind, name.
 # O título carrega o símbolo (função, nó DTS, seção) e o nome do arquivo identifica o módulo: valem mais que o corpo.
 BM25_WEIGHTS = (2.0, 6.0, 0.5, 0.0, 0.0, 1.0, 0.0, 4.0)
@@ -140,6 +149,9 @@ def _create_schema(con: sqlite3.Connection) -> bool:
     """Cria/migra o esquema. Retorna True se o índice foi recriado (versão anterior ou desconhecida)."""
     version = con.execute("PRAGMA user_version").fetchone()[0]
     rebuilt = False
+    cols = _chunk_columns(con)
+    if cols and cols != CHUNK_COLUMNS:
+        version = -1  # mesma versão com outras colunas (ex.: protótipo): recria
     if version != SCHEMA_VERSION:
         has_old = con.execute("SELECT 1 FROM sqlite_master WHERE name IN ('chunks','indexed_files') LIMIT 1").fetchone()
         # Índice de versão anterior: o FTS5 mudou de colunas, então recria (reindex automático depois).
@@ -229,7 +241,7 @@ def index_state(db_path: Path) -> str:
         con = open_readonly(db_path)
         try:
             version = con.execute("PRAGMA user_version").fetchone()[0]
-            if version != SCHEMA_VERSION:
+            if version != SCHEMA_VERSION or _chunk_columns(con) != CHUNK_COLUMNS:
                 return "outdated"
             con.execute("SELECT 1 FROM chunks LIMIT 1").fetchall()
             return "ok"

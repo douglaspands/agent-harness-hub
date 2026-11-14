@@ -11,7 +11,7 @@ from unittest import mock
 
 from ctx import rag
 from ctx.policy import doctor
-from ctx.rag import db_path_for, index_info, index_state, index_workspace, search_many, wal_bytes
+from ctx.rag import SCHEMA_VERSION, db_path_for, index_info, index_state, index_workspace, search_many, wal_bytes
 
 MB = 1024 * 1024
 
@@ -178,6 +178,23 @@ class TestMigrationAndRepair(IndexTestBase):
         con.close()
         self.assertTrue({"chunks_tri", "vectors"} <= names)
         self.assertIn("name", cols)
+
+    def test_prototype_index_with_same_version_and_other_columns_is_rebuilt(self) -> None:
+        """O protótipo local da 0.4 usou user_version 3 sem a coluna `name`: as colunas também são conferidas."""
+        self.db.parent.mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(self.db)
+        con.execute("CREATE TABLE indexed_files (path TEXT PRIMARY KEY, mtime_ns INTEGER, size INTEGER, hash TEXT, kind TEXT)")
+        con.execute(
+            "CREATE VIRTUAL TABLE chunks USING fts5(path, title, chunk_type, start_line UNINDEXED, end_line UNINDEXED, "
+            "content, kind UNINDEXED)"
+        )
+        con.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        con.commit()
+        con.close()
+        self.assertEqual(index_state(self.db), "outdated")
+        index_workspace(self.root)  # o caminho do `ctx upgrade`/`ctx index`: antes quebrava com "no column named name"
+        self.assertEqual(index_state(self.db), "ok")
+        self.assertTrue(search_many(["zebra"], workspace_root=self.root)["queries"][0]["results"])
 
     def test_corrupt_database_is_recreated(self) -> None:
         self.db.parent.mkdir(parents=True, exist_ok=True)

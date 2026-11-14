@@ -539,7 +539,7 @@ Tudo configurável em `policy.toml` (seções novas são opcionais: sem elas val
 
 ## 12. Qualidade da busca, guardrail por argumentos e avaliação por regra (v0.5)
 
-Melhorias medidas num projeto real (código bilíngue, kernel em C, Device Tree, patches, operação por `ssh`). O `ctx upgrade` acrescenta ao `policy.toml` as dicas comentadas das chaves novas; o índice antigo é recriado sozinho na primeira chamada (esquema 3).
+Melhorias medidas num projeto real (código bilíngue, kernel em C, Device Tree, patches, operação por `ssh`). O `ctx upgrade` acrescenta ao `policy.toml` as dicas comentadas das chaves novas; o índice antigo é recriado sozinho na primeira chamada (esquema 4).
 
 ### 12.1 Busca
 - **Recuo da consulta:** todos os termos → substring (tabela de trigramas: `dsidph`, `lane_mb`) → qualquer termo. O modo aparece no cabeçalho do resultado.
