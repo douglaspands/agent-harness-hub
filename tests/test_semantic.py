@@ -106,6 +106,7 @@ class TestVectors(unittest.TestCase):
                 return np.array([[1.0, 0.0] if "glue" in t else [0.0, 1.0] for t in texts])
 
         con = sqlite3.connect(":memory:")
+        self.addCleanup(con.close)
         con.execute("CREATE TABLE vectors (id INTEGER PRIMARY KEY, path TEXT, vec BLOB)")
         vecs = semantic.encode(Fake(), ["glue c", "outro"])
         con.executemany("INSERT INTO vectors VALUES (?, ?, ?)", [(1, "g", semantic.to_blob(vecs[0])), (2, "o", semantic.to_blob(vecs[1]))])

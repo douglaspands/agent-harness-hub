@@ -55,7 +55,7 @@ def humanize_age(seconds: int) -> str:
 
 
 def cmd_index(args: argparse.Namespace) -> int:
-    res = index_workspace(force=args.force)
+    res = index_workspace(force=args.force, download=True)  # só o `ctx index` baixa o modelo semântico
     print(f"✓ Indexação concluída em {res['elapsed_ms']}ms:")
     print(f"  • Arquivos indexados/atualizados: {res['indexed']}")
     print(f"  • Arquivos inalterados (pulados): {res['skipped']}")

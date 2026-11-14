@@ -791,7 +791,7 @@ def _store_file(
 
 
 def index_workspace(
-    workspace_root: Path = WORKSPACE_ROOT, force: bool = False, budget_ms: float | None = None, download: bool = True
+    workspace_root: Path = WORKSPACE_ROOT, force: bool = False, budget_ms: float | None = None, download: bool = False
 ) -> dict[str, Any]:
     """Indexa incrementalmente o repositório em SQLite FTS5 e consolida o WAL ao final.
 
